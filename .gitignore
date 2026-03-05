@@ -45,5 +45,9 @@ htmlcov/
 # Redis / local data
 dump.rdb
 
+# Brainstorming / internal docs
+ARGUS_PRD_v1.md
+PROGRESS.md
+
 # Distribution / packaging
 *.spec
