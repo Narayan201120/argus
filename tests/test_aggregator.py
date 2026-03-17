@@ -68,3 +68,25 @@ def test_reconciliation_summary_flags_unsupported_assumptions():
     )
     assert "API access is available" in summary["unsupported_assumptions"]
     assert summary["confidence"] in {"medium", "low"}
+
+
+def test_reconciliation_summary_flags_missing_validation_coverage():
+    summary = _build_reconciliation_summary(
+        {
+            "researcher": _response(
+                '{"facts":["API availability is unknown"],"constraints":["Respect rate limits"],"references":[],"unknowns":["API access"],"confidence":"medium"}',
+                "collect facts",
+            ),
+            "analyzer": _response(
+                '{"proposed_solution":"Use a staged scraper","assumptions":["Public access is available"],"tradeoffs":[],"risks":["rate limit pressure"],"validation_checks":["Test basic connectivity"]}',
+                "design solution",
+            ),
+            "verifier": _response(
+                '{"critical_risks":["Rate limiting may block requests"],"hidden_assumptions":["Public access is available"],"edge_cases":["No API present"],"validation_requirements":["Confirm acceptable request rate","Confirm integration access"],"confidence":"high"}',
+                "pressure-test",
+            ),
+        }
+    )
+    assert "Confirm acceptable request rate" in summary["missing_validation_coverage"]
+    assert any("Missing validation coverage" in item for item in summary["conflicts"])
+    assert summary["confidence"] in {"medium", "low"}

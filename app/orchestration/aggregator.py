@@ -153,6 +153,44 @@ def _find_unsupported_assumptions(
     return _normalize_text_list(unsupported)
 
 
+def _find_missing_validation_coverage(
+    analysis: AnalysisResult | None,
+    verification: VerificationResult | None,
+) -> list[str]:
+    if analysis is None or verification is None:
+        return []
+
+    analysis_checks_text = " ".join(analysis.validation_checks).casefold()
+    missing = []
+    for requirement in verification.validation_requirements:
+        tokens = [token.casefold() for token in requirement.replace("/", " ").replace("-", " ").split() if len(token) > 3]
+        covered = any(token in analysis_checks_text for token in tokens) if analysis_checks_text else False
+        if not covered:
+            missing.append(requirement)
+    return _normalize_text_list(missing)
+
+
+def _find_constraint_risk_conflicts(
+    research: ResearchResult | None,
+    analysis: AnalysisResult | None,
+    verification: VerificationResult | None,
+) -> list[str]:
+    if research is None:
+        return []
+
+    risk_text = " ".join(
+        (analysis.risks if analysis is not None else [])
+        + (verification.critical_risks if verification is not None else [])
+    ).casefold()
+
+    conflicts = []
+    for constraint in research.constraints:
+        tokens = [token.casefold() for token in constraint.replace("/", " ").replace("-", " ").split() if len(token) > 3]
+        if any(token in risk_text for token in tokens):
+            conflicts.append(f"Research constraint challenged by risk: {constraint}")
+    return _normalize_text_list(conflicts)
+
+
 def _build_reconciliation_summary(response_bundle: dict[str, ConnectorResponse]) -> dict[str, object]:
     parsed = _parse_role_outputs(response_bundle)
     research = parsed.get("researcher") if isinstance(parsed.get("researcher"), ResearchResult) else None
@@ -160,6 +198,8 @@ def _build_reconciliation_summary(response_bundle: dict[str, ConnectorResponse])
     verification = parsed.get("verifier") if isinstance(parsed.get("verifier"), VerificationResult) else None
 
     unsupported_assumptions = _find_unsupported_assumptions(research, analysis, verification)
+    missing_validation_coverage = _find_missing_validation_coverage(analysis, verification)
+    constraint_risk_conflicts = _find_constraint_risk_conflicts(research, analysis, verification)
     material_risks = _normalize_text_list(
         (analysis.risks if analysis is not None else [])
         + (verification.critical_risks if verification is not None else [])
@@ -168,18 +208,26 @@ def _build_reconciliation_summary(response_bundle: dict[str, ConnectorResponse])
     conflicts = _normalize_text_list(
         [f"Unsupported analyzer assumption: {item}" for item in unsupported_assumptions]
         + [f"Verifier surfaced hidden assumption: {item}" for item in (verification.hidden_assumptions if verification is not None else [])]
+        + [f"Missing validation coverage: {item}" for item in missing_validation_coverage]
+        + constraint_risk_conflicts
     )
 
     confidence = "high"
-    if conflicts or material_risks:
+    if conflicts or material_risks or missing_validation_coverage:
         confidence = "medium"
-    if len(conflicts) >= 2 or len(missing_evidence) >= 2:
+    if (
+        len(conflicts) >= 2
+        or len(missing_evidence) >= 2
+        or len(missing_validation_coverage) >= 2
+    ):
         confidence = "low"
 
     return {
         "unsupported_assumptions": unsupported_assumptions,
         "material_risks": material_risks,
         "missing_evidence": missing_evidence,
+        "missing_validation_coverage": missing_validation_coverage,
+        "constraint_risk_conflicts": constraint_risk_conflicts,
         "conflicts": conflicts,
         "confidence": confidence,
         "parsed_roles": sorted(parsed.keys()),
