@@ -7,8 +7,9 @@ class Settings(BaseSettings):
 
     # AI Provider API Keys
     gemini_api_key: Optional[str] = None
-    openai_api_key: Optional[str] = None
-    anthropic_api_key: Optional[str] = None
+    # openai_api_key: Optional[str] = None
+    # anthropic_api_key: Optional[str] = None
+    mistral_api_key: Optional[str] = None
 
     # App
     app_name: str = "ARGUS"

@@ -1,18 +1,65 @@
-import uuid
+import asyncio
 import time
+import uuid
 
 from fastapi import APIRouter, HTTPException
 
-from app.api.schemas import QueryRequest, QueryResponse, ModelStatus, TokenUsageOut
-from app.connectors.base import ConnectorConfig, ConnectorStatus
+from app.api.schemas import ModelStatus, QueryRequest, QueryResponse, TokenUsageOut
+from app.connectors.base import ConnectorConfig, ConnectorResponse, ConnectorStatus, TokenUsage
 from app.connectors.registry import registry
-from app.orchestration.decomposer import decompose_query
-from app.orchestration.dispatcher import dispatch
 from app.orchestration.aggregator import synthesize
+from app.orchestration.analyzer import run_analysis_task
+from app.orchestration.decomposer import _is_simple_query, build_parallel_plan
+from app.orchestration.researcher import run_research_task
 from app.utils.logger import get_logger
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+
+def _select_research_connector(active_connectors):
+    return (
+        registry.get("gemini")
+        or registry.get("openai")
+        or active_connectors[0]
+    )
+
+
+def _select_analysis_connector(active_connectors):
+    return (
+        registry.get("openai")
+        or registry.get("mistral")
+        or registry.get("claude")
+        or active_connectors[min(1, len(active_connectors) - 1)]
+    )
+
+
+def _build_status(
+    role_id: str,
+    connector_id: str,
+    objective: str,
+    output,
+    latency_ms: int,
+) -> ConnectorResponse:
+    if isinstance(output, Exception):
+        return ConnectorResponse(
+            model_id=connector_id,
+            content="",
+            latency_ms=latency_ms,
+            token_usage=TokenUsage(),
+            status=ConnectorStatus.ERROR,
+            error=str(output),
+            sub_query=objective,
+        )
+
+    return ConnectorResponse(
+        model_id=connector_id,
+        content=output.model_dump_json(indent=2),
+        latency_ms=latency_ms,
+        token_usage=TokenUsage(),
+        status=ConnectorStatus.SUCCESS,
+        sub_query=objective,
+    )
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -27,7 +74,6 @@ async def run_query(request: QueryRequest) -> QueryResponse:
         "requested_connectors": request.model_config_.connectors,
     })
 
-    # ── Resolve active connectors ────────────────────────────────────────────
     active_connectors = [
         registry.get(cid)
         for cid in request.model_config_.connectors
@@ -46,7 +92,6 @@ async def run_query(request: QueryRequest) -> QueryResponse:
         temperature=request.model_config_.temperature,
     )
 
-    # ── Synthesizer fallback chain ───────────────────────────────────────────
     synthesizer_chain = [
         c for c in [
             registry.get("claude"),
@@ -56,25 +101,10 @@ async def run_query(request: QueryRequest) -> QueryResponse:
         if c is not None and c.is_available
     ]
 
-    # ── Step 1: Decompose ────────────────────────────────────────────────────
     decompose_start = time.monotonic()
-
-    # Prefer openai for decomposition (fast + good structured output), else fallback
-    decomposer = (
-        registry.get("openai")
-        or registry.get("gemini")
-        or active_connectors[0]
-    )
-
-    sub_queries = await decompose_query(
-        query=request.query,
-        connectors=active_connectors,
-        decomposer_connector=decomposer,
-    )
+    short_circuited = _is_simple_query(request.query)
     decompose_ms = int((time.monotonic() - decompose_start) * 1000)
-    short_circuited = sub_queries is None
 
-    # ── Step 2: Short-circuit path ───────────────────────────────────────────
     if short_circuited:
         logger.info({"message": "Short-circuit: aggregator answering directly", "request_id": request_id})
         result, synthesizer_used, _ = await synthesize(
@@ -93,19 +123,49 @@ async def run_query(request: QueryRequest) -> QueryResponse:
             short_circuited=True,
         )
 
-    # ── Step 3: Dispatch ─────────────────────────────────────────────────────
-    dispatch_start = time.monotonic()
-    connector_map = {c.connector_id: c for c in active_connectors}
+    plan = build_parallel_plan(
+        query=request.query,
+        request_id=request_id,
+    )
 
-    response_bundle = await dispatch(
-        prompt=request.query,
-        sub_queries=sub_queries,
-        connectors=connector_map,
-        config=connector_config,
+    dispatch_start = time.monotonic()
+    research_connector = _select_research_connector(active_connectors)
+    analysis_connector = _select_analysis_connector(active_connectors)
+
+    research_output, analysis_output = await asyncio.gather(
+        run_research_task(
+            connector=research_connector,
+            shared_state=plan.shared_state,
+            task=plan.research_task,
+            config=connector_config,
+        ),
+        run_analysis_task(
+            connector=analysis_connector,
+            shared_state=plan.shared_state,
+            task=plan.analysis_task,
+            config=connector_config,
+        ),
+        return_exceptions=True,
     )
     dispatch_ms = int((time.monotonic() - dispatch_start) * 1000)
 
-    # ── Step 4: Synthesize ───────────────────────────────────────────────────
+    response_bundle = {
+        "researcher": _build_status(
+            role_id="researcher",
+            connector_id=research_connector.connector_id,
+            objective=plan.research_task.objective,
+            output=research_output,
+            latency_ms=dispatch_ms,
+        ),
+        "analyzer": _build_status(
+            role_id="analyzer",
+            connector_id=analysis_connector.connector_id,
+            objective=plan.analysis_task.objective,
+            output=analysis_output,
+            latency_ms=dispatch_ms,
+        ),
+    }
+
     synthesis_start = time.monotonic()
     result, synthesizer_used, _ = await synthesize(
         original_query=request.query,
@@ -115,7 +175,6 @@ async def run_query(request: QueryRequest) -> QueryResponse:
     )
     synthesis_ms = int((time.monotonic() - synthesis_start) * 1000)
 
-    # ── Build response ───────────────────────────────────────────────────────
     model_statuses = [
         ModelStatus(
             connector_id=cid,

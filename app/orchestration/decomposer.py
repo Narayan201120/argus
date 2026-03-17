@@ -1,8 +1,13 @@
 import json
-import asyncio
-from pathlib import Path
 
 from app.connectors.base import BaseConnector, ConnectorConfig, ConnectorStatus
+from app.orchestration.contracts import (
+    AnalysisTask,
+    OrchestrationPlan,
+    ResearchTask,
+    SharedTaskState,
+    VerificationTask,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -13,7 +18,7 @@ DECOMPOSER_SYSTEM_PROMPT = """You are a query planner for ARGUS, an AI orchestra
 
 You will receive a user query and a list of AI connectors with their capabilities.
 
-Your job: decompose the query into specific, complementary sub-queries — one per connector.
+Your job: decompose the query into specific, complementary sub-queries - one per connector.
 
 Rules:
 - Each sub-query must cover a DIFFERENT aspect of the overall question
@@ -55,24 +60,18 @@ async def decompose_query(
     decomposer_connector: BaseConnector | None = None,
 ) -> dict[str, str] | None:
     """
-    Decompose a user query into per-connector sub-queries.
-
-    Returns:
-        dict[connector_id -> sub_query] if decomposition succeeded,
-        or None to signal short-circuit (aggregator answers directly).
+    Legacy decomposition path retained for compatibility with existing tests and call sites.
     """
     if not connectors:
         return None
 
     if len(connectors) == 1:
-        # Only one connector — give it the whole query
         return {connectors[0].connector_id: query}
 
     if _is_simple_query(query):
         logger.info({"message": "Short-circuit: simple query, aggregator responds directly"})
         return None
 
-    # Build capability context for the decomposer
     connector_profiles = "\n".join(
         f"- {c.connector_id}: capabilities = [{', '.join(c.capabilities)}]"
         for c in connectors
@@ -103,7 +102,6 @@ async def decompose_query(
 
         sub_queries = _parse_json_response(response.content)
 
-        # Ensure every active connector has a sub-query (fill missing with full query)
         connector_ids = {c.connector_id for c in connectors}
         for cid in connector_ids:
             if cid not in sub_queries:
@@ -119,3 +117,96 @@ async def decompose_query(
     except (json.JSONDecodeError, Exception) as e:
         logger.error({"message": "Decomposer error, falling back", "error": str(e)})
         return {c.connector_id: query for c in connectors}
+
+
+def build_parallel_plan(
+    query: str,
+    request_id: str,
+) -> OrchestrationPlan:
+    normalized_query = query.strip()
+
+    shared_state = SharedTaskState(
+        request_id=request_id,
+        original_query=normalized_query,
+        main_objective=normalized_query,
+        task_context=[
+            "Parallel orchestration: researcher and analyzer run from the same frozen task snapshot.",
+            "Aggregator reconciles role-scoped outputs into the final response.",
+        ],
+        constraints=[
+            "Researcher, analyzer, and verifier must not depend on each other's live outputs.",
+            "Workers must stay within assigned scope and avoid writing the final answer.",
+        ],
+        global_rules=[
+            "Return only role-scoped output.",
+            "State uncertainty explicitly instead of inventing facts.",
+            "Do not silently cross role boundaries.",
+        ],
+        expected_final_output="A reconciled response grounded in research and analysis outputs.",
+    )
+
+    research_task = ResearchTask(
+        objective="Collect factual background, constraints, references, and unknowns relevant to the query.",
+        scope=[
+            "Relevant facts and background",
+            "Operational or domain constraints",
+            "References or source leads",
+            "Unknowns that could affect confidence",
+        ],
+        do_not_cover=[
+            "Do not propose the final implementation or recommendation.",
+            "Do not produce the final answer.",
+        ],
+        required_output_fields=["facts", "constraints", "references", "unknowns", "confidence"],
+    )
+
+    analysis_task = AnalysisTask(
+        objective="Develop the technical or logical solution path from the same shared task snapshot.",
+        scope=[
+            "Solution logic or implementation path",
+            "Assumptions required to proceed",
+            "Tradeoffs and risks",
+            "Validation checks for the proposed approach",
+        ],
+        do_not_cover=[
+            "Do not produce broad background research.",
+            "Do not claim unsupported facts as certain.",
+            "Do not produce the final answer.",
+        ],
+        required_output_fields=[
+            "proposed_solution",
+            "assumptions",
+            "tradeoffs",
+            "risks",
+            "validation_checks",
+        ],
+    )
+
+    verification_task = VerificationTask(
+        objective="Pressure-test the task and likely solution space for risks, hidden assumptions, and edge cases.",
+        scope=[
+            "Critical risks that could degrade the final answer",
+            "Hidden assumptions that need to be surfaced",
+            "Edge cases and failure scenarios",
+            "Validation requirements before strong confidence is justified",
+        ],
+        do_not_cover=[
+            "Do not produce the primary implementation plan.",
+            "Do not produce broad background research.",
+            "Do not produce the final answer.",
+        ],
+        required_output_fields=[
+            "critical_risks",
+            "hidden_assumptions",
+            "edge_cases",
+            "validation_requirements",
+            "confidence",
+        ],
+    )
+
+    return OrchestrationPlan(
+        shared_state=shared_state,
+        research_task=research_task,
+        analysis_task=analysis_task,
+        verification_task=verification_task,
+    )
