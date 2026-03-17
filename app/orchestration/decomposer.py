@@ -13,6 +13,7 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 SHORT_CIRCUIT_WORD_THRESHOLD = 50
+MAX_OBJECTIVE_WORDS = 24
 
 DECOMPOSER_SYSTEM_PROMPT = """You are a query planner for ARGUS, an AI orchestration system.
 
@@ -52,6 +53,17 @@ def _parse_json_response(raw: str) -> dict[str, str]:
         if raw.startswith("json"):
             raw = raw[4:]
     return json.loads(raw.strip())
+
+
+def _clean_query_text(query: str) -> str:
+    return " ".join(query.split()).strip()
+
+
+def _derive_main_objective(query: str) -> str:
+    words = _clean_query_text(query).split()
+    if len(words) <= MAX_OBJECTIVE_WORDS:
+        return " ".join(words)
+    return " ".join(words[:MAX_OBJECTIVE_WORDS]).strip() + "..."
 
 
 async def decompose_query(
@@ -123,12 +135,12 @@ def build_parallel_plan(
     query: str,
     request_id: str,
 ) -> OrchestrationPlan:
-    normalized_query = query.strip()
+    normalized_query = _clean_query_text(query)
 
     shared_state = SharedTaskState(
         request_id=request_id,
         original_query=normalized_query,
-        main_objective=normalized_query,
+        main_objective=_derive_main_objective(normalized_query),
         task_context=[
             "Parallel orchestration: researcher and analyzer run from the same frozen task snapshot.",
             "Aggregator reconciles role-scoped outputs into the final response.",

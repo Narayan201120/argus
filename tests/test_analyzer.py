@@ -1,8 +1,8 @@
 import pytest
 
 from app.connectors.base import BaseConnector, ConnectorConfig, ConnectorResponse, ConnectorStatus, TokenUsage
-from app.orchestration.analyzer import run_analysis_task
 from app.orchestration.contracts import AnalysisTask, SharedTaskState
+from app.orchestration.workers import run_analysis_task
 
 
 class AnalysisConnector(BaseConnector):

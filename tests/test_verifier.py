@@ -2,7 +2,7 @@ import pytest
 
 from app.connectors.base import BaseConnector, ConnectorConfig, ConnectorResponse, ConnectorStatus, TokenUsage
 from app.orchestration.contracts import SharedTaskState, VerificationTask
-from app.orchestration.verifier import run_verification_task
+from app.orchestration.workers import run_verification_task
 
 
 class VerificationConnector(BaseConnector):

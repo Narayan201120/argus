@@ -81,3 +81,28 @@ def test_aggregation_input_wraps_results():
     assert aggregation_input.research_result.confidence == "high"
     assert aggregation_input.analysis_result.proposed_solution == "Do X"
     assert aggregation_input.verification_result.edge_cases == ["e1"]
+
+
+def test_contracts_denoise_whitespace_and_duplicates():
+    state = SharedTaskState(
+        request_id="  req-3  ",
+        original_query="  Design   a   secure   system   ",
+        main_objective="  Design   a secure system ",
+        task_context=["  backend   service ", "backend service"],
+        constraints=["  respect limits  ", "respect limits"],
+        global_rules=["  no final answer "],
+        expected_final_output="  markdown  ",
+    )
+    analysis = AnalysisResult(
+        proposed_solution="  Use   a staged pipeline  ",
+        assumptions=["  API access  ", "API access"],
+        tradeoffs=["  speed vs safety "],
+        risks=["  rate limits ", "rate limits"],
+        validation_checks=["  integration test  "],
+    )
+    assert state.request_id == "req-3"
+    assert state.task_context == ["backend service"]
+    assert state.constraints == ["respect limits"]
+    assert analysis.proposed_solution == "Use a staged pipeline"
+    assert analysis.assumptions == ["API access"]
+    assert analysis.risks == ["rate limits"]

@@ -8,9 +8,8 @@ from app.api.schemas import ModelStatus, QueryRequest, QueryResponse, TokenUsage
 from app.connectors.base import ConnectorConfig, ConnectorResponse, ConnectorStatus, TokenUsage
 from app.connectors.registry import registry
 from app.orchestration.aggregator import synthesize
-from app.orchestration.analyzer import run_analysis_task
 from app.orchestration.decomposer import _is_simple_query, build_parallel_plan
-from app.orchestration.researcher import run_research_task
+from app.orchestration.workers import run_analysis_task, run_research_task, run_verification_task
 from app.utils.logger import get_logger
 
 router = APIRouter()
@@ -34,8 +33,25 @@ def _select_analysis_connector(active_connectors):
     )
 
 
+def _select_verification_connector(active_connectors, selected_ids: set[str]):
+    preferred = [
+        registry.get("claude"),
+        registry.get("mistral"),
+        registry.get("openai"),
+        registry.get("gemini"),
+    ]
+    for connector in preferred:
+        if connector is not None and connector.is_available and connector.connector_id not in selected_ids:
+            return connector
+
+    for connector in active_connectors:
+        if connector.connector_id not in selected_ids:
+            return connector
+
+    return active_connectors[-1]
+
+
 def _build_status(
-    role_id: str,
     connector_id: str,
     objective: str,
     output,
@@ -131,8 +147,12 @@ async def run_query(request: QueryRequest) -> QueryResponse:
     dispatch_start = time.monotonic()
     research_connector = _select_research_connector(active_connectors)
     analysis_connector = _select_analysis_connector(active_connectors)
+    verification_connector = _select_verification_connector(
+        active_connectors,
+        {research_connector.connector_id, analysis_connector.connector_id},
+    )
 
-    research_output, analysis_output = await asyncio.gather(
+    research_output, analysis_output, verification_output = await asyncio.gather(
         run_research_task(
             connector=research_connector,
             shared_state=plan.shared_state,
@@ -145,23 +165,33 @@ async def run_query(request: QueryRequest) -> QueryResponse:
             task=plan.analysis_task,
             config=connector_config,
         ),
+        run_verification_task(
+            connector=verification_connector,
+            shared_state=plan.shared_state,
+            task=plan.verification_task,
+            config=connector_config,
+        ),
         return_exceptions=True,
     )
     dispatch_ms = int((time.monotonic() - dispatch_start) * 1000)
 
     response_bundle = {
         "researcher": _build_status(
-            role_id="researcher",
             connector_id=research_connector.connector_id,
             objective=plan.research_task.objective,
             output=research_output,
             latency_ms=dispatch_ms,
         ),
         "analyzer": _build_status(
-            role_id="analyzer",
             connector_id=analysis_connector.connector_id,
             objective=plan.analysis_task.objective,
             output=analysis_output,
+            latency_ms=dispatch_ms,
+        ),
+        "verifier": _build_status(
+            connector_id=verification_connector.connector_id,
+            objective=plan.verification_task.objective,
+            output=verification_output,
             latency_ms=dispatch_ms,
         ),
     }

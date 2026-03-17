@@ -2,7 +2,7 @@ import pytest
 
 from app.connectors.base import BaseConnector, ConnectorConfig, ConnectorResponse, ConnectorStatus, TokenUsage
 from app.orchestration.contracts import ResearchTask, SharedTaskState
-from app.orchestration.researcher import run_research_task
+from app.orchestration.workers import run_research_task
 
 
 class ResearchConnector(BaseConnector):
