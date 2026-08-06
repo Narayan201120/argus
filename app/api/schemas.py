@@ -1,12 +1,12 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
-from datetime import datetime
+from datetime import UTC, datetime
 
 
 class ConnectorConfigRequest(BaseModel):
-    connectors: list[str] = Field(
-        default=["gemini", "openai", "claude"],
-        description="Connector IDs to activate for this query",
+    connectors: list[str] | None = Field(
+        default=None,
+        description="Connector IDs to activate. Omit to use every available connector.",
     )
     timeout_s: int = Field(default=45, ge=5, le=120)
     max_tokens: int = Field(default=4096, ge=256, le=32000)
@@ -30,6 +30,7 @@ class TokenUsageOut(BaseModel):
 
 
 class ModelStatus(BaseModel):
+    role: Literal["researcher", "analyzer", "verifier", "direct"]
     connector_id: str
     status: Literal["success", "timeout", "error", "skipped"]
     latency_ms: int
@@ -45,7 +46,7 @@ class QueryResponse(BaseModel):
     synthesizer: str
     model_statuses: list[ModelStatus]
     latency_breakdown: dict[str, int]
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     short_circuited: bool = False
 
 
@@ -70,4 +71,4 @@ class ConnectorHealthStatus(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok", "degraded", "unavailable"]
     connectors: list[ConnectorHealthStatus]
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))

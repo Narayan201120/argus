@@ -305,8 +305,8 @@ async def synthesize(
         )
 
     if len(successful) == 1:
-        cid, r = next(iter(successful.items()))
-        return r.content, cid, r
+        _, r = next(iter(successful.items()))
+        return r.content, r.model_id, r
 
     system_prompt = _load_synthesis_prompt()
     synthesis_input = _build_synthesis_prompt(original_query, successful, system_prompt)

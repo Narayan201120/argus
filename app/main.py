@@ -4,8 +4,8 @@ from fastapi import FastAPI
 from app.config import settings
 from app.connectors.registry import registry
 from app.connectors.gemini import GeminiConnector
-# from app.connectors.openai import OpenAIConnector
-# from app.connectors.claude import ClaudeConnector
+from app.connectors.openai import OpenAIConnector
+from app.connectors.claude import ClaudeConnector
 from app.connectors.mistral import MistralConnector
 from app.api.routes import query as query_router
 from app.api.routes import health as health_router
@@ -21,8 +21,8 @@ async def lifespan(app: FastAPI):
     logger.info({"message": "ARGUS starting up", "version": settings.app_version})
 
     registry.register(GeminiConnector())
-    # registry.register(OpenAIConnector())
-    # registry.register(ClaudeConnector())
+    registry.register(OpenAIConnector())
+    registry.register(ClaudeConnector())
     registry.register(MistralConnector())
 
     logger.info({"message": "Connectors registered", "connectors": registry.ids()})

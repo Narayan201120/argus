@@ -15,37 +15,25 @@ from app.utils.logger import get_logger
 router = APIRouter()
 logger = get_logger(__name__)
 
-
-def _select_research_connector(active_connectors):
-    return (
-        registry.get("gemini")
-        or registry.get("openai")
-        or active_connectors[0]
-    )
-
-
-def _select_analysis_connector(active_connectors):
-    return (
-        registry.get("openai")
-        or registry.get("mistral")
-        or registry.get("claude")
-        or active_connectors[min(1, len(active_connectors) - 1)]
-    )
+ROLE_PREFERENCES = {
+    "researcher": ["gemini", "openai", "claude", "mistral"],
+    "analyzer": ["openai", "mistral", "claude", "gemini"],
+    "verifier": ["claude", "mistral", "openai", "gemini"],
+    "direct": ["claude", "openai", "gemini", "mistral"],
+}
 
 
-def _select_verification_connector(active_connectors, selected_ids: set[str]):
-    preferred = [
-        registry.get("claude"),
-        registry.get("mistral"),
-        registry.get("openai"),
-        registry.get("gemini"),
-    ]
-    for connector in preferred:
-        if connector is not None and connector.is_available and connector.connector_id not in selected_ids:
+def _select_connector(active_connectors, role: str, excluded_ids: set[str] | None = None):
+    excluded_ids = excluded_ids or set()
+    by_id = {connector.connector_id: connector for connector in active_connectors}
+
+    for connector_id in ROLE_PREFERENCES[role]:
+        connector = by_id.get(connector_id)
+        if connector is not None and connector.connector_id not in excluded_ids:
             return connector
 
     for connector in active_connectors:
-        if connector.connector_id not in selected_ids:
+        if connector.connector_id not in excluded_ids:
             return connector
 
     return active_connectors[-1]
@@ -78,22 +66,40 @@ def _build_status(
     )
 
 
+def _token_usage_out(token_usage: TokenUsage | None) -> TokenUsageOut | None:
+    if token_usage is None:
+        return None
+    return TokenUsageOut(
+        prompt_tokens=token_usage.prompt_tokens,
+        completion_tokens=token_usage.completion_tokens,
+        total_tokens=token_usage.total_tokens,
+    )
+
+
 @router.post("/query", response_model=QueryResponse)
 async def run_query(request: QueryRequest) -> QueryResponse:
     request_id = str(uuid.uuid4())
     total_start = time.monotonic()
+    requested_connector_ids = request.model_config_.connectors or registry.ids()
 
     logger.info({
         "message": "Query received",
         "request_id": request_id,
         "query_length": len(request.query),
-        "requested_connectors": request.model_config_.connectors,
+        "requested_connectors": requested_connector_ids,
     })
 
+    unknown_connector_ids = sorted(set(requested_connector_ids) - set(registry.ids()))
+    if unknown_connector_ids:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown connector IDs: {', '.join(unknown_connector_ids)}",
+        )
+
     active_connectors = [
-        registry.get(cid)
-        for cid in request.model_config_.connectors
-        if registry.get(cid) and registry.get(cid).is_available
+        registry.get(connector_id)
+        for connector_id in requested_connector_ids
+        if registry.get(connector_id) and registry.get(connector_id).is_available
     ]
 
     if not active_connectors:
@@ -107,14 +113,11 @@ async def run_query(request: QueryRequest) -> QueryResponse:
         max_tokens=request.model_config_.max_tokens,
         temperature=request.model_config_.temperature,
     )
-
     synthesizer_chain = [
-        c for c in [
-            registry.get("claude"),
-            registry.get("openai"),
-            registry.get("gemini"),
-        ]
-        if c is not None and c.is_available
+        connector
+        for connector_id in ROLE_PREFERENCES["direct"]
+        for connector in active_connectors
+        if connector.connector_id == connector_id
     ]
 
     decompose_start = time.monotonic()
@@ -122,33 +125,41 @@ async def run_query(request: QueryRequest) -> QueryResponse:
     decompose_ms = int((time.monotonic() - decompose_start) * 1000)
 
     if short_circuited:
-        logger.info({"message": "Short-circuit: aggregator answering directly", "request_id": request_id})
-        result, synthesizer_used, _ = await synthesize(
-            original_query=request.query,
-            response_bundle={},
-            synthesizer_chain=synthesizer_chain,
+        direct_connector = _select_connector(active_connectors, "direct")
+        direct_response = await direct_connector.query(
+            prompt="You are the direct response layer of an AI orchestration system.",
+            sub_query=request.query,
             config=connector_config,
         )
+        total_ms = int((time.monotonic() - total_start) * 1000)
         return QueryResponse(
             request_id=request_id,
             query=request.query,
-            result=result or "Unable to generate a response.",
-            synthesizer=synthesizer_used,
-            model_statuses=[],
-            latency_breakdown={"total_ms": int((time.monotonic() - total_start) * 1000)},
+            result=direct_response.content or "Unable to generate a response.",
+            synthesizer=direct_connector.connector_id,
+            model_statuses=[
+                ModelStatus(
+                    role="direct",
+                    connector_id=direct_connector.connector_id,
+                    status=direct_response.status.value,
+                    latency_ms=direct_response.latency_ms,
+                    error=direct_response.error,
+                    token_usage=_token_usage_out(direct_response.token_usage),
+                    sub_query=request.query,
+                )
+            ],
+            latency_breakdown={"decompose_ms": decompose_ms, "total_ms": total_ms},
             short_circuited=True,
         )
 
-    plan = build_parallel_plan(
-        query=request.query,
-        request_id=request_id,
-    )
+    plan = build_parallel_plan(query=request.query, request_id=request_id)
 
     dispatch_start = time.monotonic()
-    research_connector = _select_research_connector(active_connectors)
-    analysis_connector = _select_analysis_connector(active_connectors)
-    verification_connector = _select_verification_connector(
+    research_connector = _select_connector(active_connectors, "researcher")
+    analysis_connector = _select_connector(active_connectors, "analyzer")
+    verification_connector = _select_connector(
         active_connectors,
+        "verifier",
         {research_connector.connector_id, analysis_connector.connector_id},
     )
 
@@ -207,18 +218,15 @@ async def run_query(request: QueryRequest) -> QueryResponse:
 
     model_statuses = [
         ModelStatus(
-            connector_id=cid,
-            status=r.status.value,
-            latency_ms=r.latency_ms,
-            error=r.error,
-            token_usage=TokenUsageOut(
-                prompt_tokens=r.token_usage.prompt_tokens,
-                completion_tokens=r.token_usage.completion_tokens,
-                total_tokens=r.token_usage.total_tokens,
-            ) if r.token_usage else None,
-            sub_query=r.sub_query,
+            role=role,
+            connector_id=response.model_id,
+            status=response.status.value,
+            latency_ms=response.latency_ms,
+            error=response.error,
+            token_usage=_token_usage_out(response.token_usage),
+            sub_query=response.sub_query,
         )
-        for cid, r in response_bundle.items()
+        for role, response in response_bundle.items()
     ]
 
     total_ms = int((time.monotonic() - total_start) * 1000)
