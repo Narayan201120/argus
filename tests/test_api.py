@@ -125,3 +125,101 @@ def test_startup_registers_all_connector_implementations():
     assert {profile["connector_id"] for profile in response.json()["connectors"]} == {
         "gemini", "openai", "claude", "mistral",
     }
+
+
+def test_parallel_query_reports_role_assignments(monkeypatch):
+    mistral = StubConnector("mistral")
+    gemini = StubConnector("gemini")
+    monkeypatch.setattr(registry, "_connectors", {"mistral": mistral, "gemini": gemini})
+    query = " ".join(["Explain the ARGUS architecture and compare its latency tradeoffs."] * 10)
+
+    response = client.post("/v1/query", json={"query": query})
+
+    assert response.status_code == 200
+    assignments = response.json()["role_assignments"]
+    assert set(assignments) >= {"researcher", "analyzer", "verifier", "synthesizer"}
+    assert all(a in {"mistral", "gemini"} for a in assignments.values())
+
+
+def test_role_binding_override_is_honored(monkeypatch):
+    mistral = StubConnector("mistral")
+    gemini = StubConnector("gemini")
+    monkeypatch.setattr(registry, "_connectors", {"mistral": mistral, "gemini": gemini})
+    query = " ".join(["Explain the ARGUS architecture and compare its latency tradeoffs."] * 10)
+
+    response = client.post("/v1/query", json={
+        "query": query,
+        "model_config": {
+            "role_bindings": {"researcher": ["mistral"], "synthesizer": ["mistral"]},
+        },
+    })
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["role_assignments"]["researcher"] == "mistral"
+    assert data["role_assignments"]["synthesizer"] == "mistral"
+
+
+def test_unknown_role_binding_rejected(monkeypatch):
+    mistral = StubConnector("mistral")
+    monkeypatch.setattr(registry, "_connectors", {"mistral": mistral})
+
+    response = client.post("/v1/query", json={
+        "query": "What is ARGUS?",
+        "model_config": {"role_bindings": {"captain": ["mistral"]}},
+    })
+
+    assert response.status_code == 422
+    assert "Unknown roles in role_bindings" in response.json()["detail"]
+
+
+def test_unknown_profile_rejected():
+    response = client.post("/v1/query", json={
+        "query": "What is ARGUS?",
+        "model_config": {"profile": "bogus_profile"},
+    })
+    assert response.status_code == 422
+    assert "Unknown profile" in response.json()["detail"]
+
+
+def test_known_profile_restricts_connectors(monkeypatch):
+    mistral = StubConnector("mistral")
+    gemini = StubConnector("gemini")
+    monkeypatch.setattr(registry, "_connectors", {"mistral": mistral, "gemini": gemini})
+
+    response = client.post("/v1/query", json={
+        "query": "What is ARGUS?",
+        "model_config": {"profile": "fast"},
+    })
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["short_circuited"] is True
+    assert data["model_statuses"][0]["connector_id"] in {"mistral", "gemini"}
+
+
+def test_query_cache_hit_on_second_identical_request(monkeypatch):
+    from fakeredis import aioredis as fakeredis_aioredis
+
+    from app.cache import ResponseCache
+    from app.rediskit import holder as redis_holder
+
+    mistral = StubConnector("mistral")
+    monkeypatch.setattr(registry, "_connectors", {"mistral": mistral})
+    fake_redis = fakeredis_aioredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(redis_holder, "client", fake_redis)
+    monkeypatch.setattr(redis_holder, "cache", ResponseCache(fake_redis))
+
+    payload = {
+        "query": "Explain the ARGUS architecture in depth.",
+        "model_config": {"connectors": ["mistral"]},
+    }
+    first = client.post("/v1/query", json=payload)
+    second = client.post("/v1/query", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["cache_hit"] is False
+    assert second.json()["cache_hit"] is True
+    assert second.json()["result"] == first.json()["result"]
+    assert second.json()["role_assignments"] == first.json()["role_assignments"]
