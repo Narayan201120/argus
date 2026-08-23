@@ -105,12 +105,40 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _record(request: Request, method: str, status: str, duration: float) -> None:
-        # Read the route template only after call_next: Starlette matches
-        # the route inside the downstream router, so scope["route"] does
-        # not exist yet when dispatch() is entered.
-        route_template = getattr(request.scope.get("route"), "path", "unmatched")
-        HTTP_REQUESTS.labels(method=method, path=route_template, status=status).inc()
-        HTTP_LATENCY.labels(method=method, path=route_template).observe(duration)
+        HTTP_REQUESTS.labels(
+            method=method, path=route_template_for(request), status=status
+        ).inc()
+        HTTP_LATENCY.labels(method=method, path=route_template_for(request)).observe(duration)
+
+
+def route_template_for(request: Request) -> str:
+    """Resolve the cardinality-safe route template for a request.
+
+    Starlette >=1.x keeps include_router prefixes inside private wrapper
+    objects, so scope["route"].path can be missing the mount prefix
+    (e.g. "/query" instead of "/v1/query"). We therefore re-resolve the
+    full path through each top-level route entry's url_path_for() using
+    the matched route's name and path params, which works across
+    versions. Falls back to scope["route"].path, then "unmatched".
+    """
+    route = request.scope.get("route")
+    if route is None:
+        return "unmatched"
+
+    name = getattr(route, "name", None)
+    params = request.scope.get("path_params") or {}
+    if name:
+        app = request.scope.get("app")
+        for entry in getattr(app, "routes", []) or []:
+            url_path_for = getattr(entry, "url_path_for", None)
+            if url_path_for is None:
+                continue
+            try:
+                return str(url_path_for(name, **params))
+            except Exception:  # noqa: BLE001 - any non-match just means "try next"
+                continue
+
+    return getattr(route, "path", "unmatched")
 
 
 @router.get("/metrics")
