@@ -79,7 +79,9 @@ def _model_status(role: StreamRole, response: ConnectorResponse) -> ModelStatus:
 @router.post("/query/stream")
 async def stream_query(request: QueryRequest) -> StreamingResponse:
     request_id = str(uuid.uuid4())
-    active_connectors, overrides = resolve_request_connectors(request)
+    resolved = resolve_request_connectors(request)
+    active_connectors = resolved.active_connectors
+    overrides = resolved.overrides
     connector_config = ConnectorConfig(
         timeout_s=request.model_config_.timeout_s,
         max_tokens=request.model_config_.max_tokens,
@@ -203,6 +205,8 @@ async def stream_query(request: QueryRequest) -> StreamingResponse:
             latency_breakdown={"total_ms": int((time.monotonic() - total_start) * 1000)},
             short_circuited=False,
             role_assignments=assignments,
+            router_strategy=resolved.router_strategy,
+            matched_profile=resolved.matched_profile,
         )
 
     async def run_short_pipeline(total_start: float) -> QueryResponse:
@@ -231,6 +235,8 @@ async def stream_query(request: QueryRequest) -> StreamingResponse:
             latency_breakdown={"total_ms": int((time.monotonic() - total_start) * 1000)},
             short_circuited=True,
             role_assignments={"direct": direct.connector_id},
+            router_strategy=resolved.router_strategy,
+            matched_profile=resolved.matched_profile,
         )
 
     async def producer() -> None:

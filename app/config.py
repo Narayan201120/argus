@@ -51,6 +51,7 @@ class Settings(BaseSettings):
 
     # Routing / role binding
     routing_config_path: str = "config/routing.yaml"
+    router_strategy: str = "static"
 
 
 settings = Settings()

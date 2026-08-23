@@ -104,7 +104,9 @@ async def run_query(request: QueryRequest) -> QueryResponse:
             return cached_response
 
     mc = request.model_config_
-    active_connectors, role_binding_overrides = resolve_request_connectors(request)
+    resolved = resolve_request_connectors(request)
+    active_connectors = resolved.active_connectors
+    role_binding_overrides = resolved.overrides
 
     logger.info({
         "message": "Query received",
@@ -112,6 +114,8 @@ async def run_query(request: QueryRequest) -> QueryResponse:
         "query_length": len(request.query),
         "requested_connectors": [c.connector_id for c in active_connectors],
         "profile": mc.profile,
+        "router_strategy": resolved.router_strategy,
+        "matched_profile": resolved.matched_profile,
         "role_bindings": role_binding_overrides or None,
     })
 
@@ -162,6 +166,8 @@ async def run_query(request: QueryRequest) -> QueryResponse:
             latency_breakdown={"decompose_ms": decompose_ms, "total_ms": total_ms},
             short_circuited=True,
             role_assignments=role_assignments,
+            router_strategy=resolved.router_strategy,
+            matched_profile=resolved.matched_profile,
         )
         if cache is not None and direct_response.status == ConnectorStatus.SUCCESS:
             await cache.set(cache_payload, response.model_dump(mode="json"))
@@ -277,6 +283,8 @@ async def run_query(request: QueryRequest) -> QueryResponse:
             "total_ms": total_ms,
         },
         role_assignments=role_assignments,
+        router_strategy=resolved.router_strategy,
+        matched_profile=resolved.matched_profile,
     )
     if cache is not None:
         await cache.set(cache_payload, response.model_dump(mode="json"))

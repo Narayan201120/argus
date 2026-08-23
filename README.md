@@ -91,6 +91,15 @@ Role-to-provider preference chains and named profiles live in `config/routing.ya
 
 Set `model_config.role_bindings` to override which provider fills `researcher`, `analyzer`, `verifier`, or `synthesizer`. Every response includes `role_assignments` showing the actual provider used per role.
 
+### Router strategies
+
+`ROUTER_STRATEGY` (default `"static"`) selects how the connector pool is chosen; a request can override it via `model_config.router_strategy` (unknown values return `422`):
+
+- `static` - fixed YAML preference chains per role, exactly as configured in `config/routing.yaml`.
+- `semantic` - when the caller set no explicit profile, a keyword intent classifier infers one of the named profiles from the query text (`research`, `code`, `analysis`, `fast`). An explicit `model_config.profile` or `model_config.connectors` always wins over inference.
+
+Responses expose `router_strategy` and `matched_profile` so callers can see which path served the request.
+
 ## Testing
 
 ```powershell

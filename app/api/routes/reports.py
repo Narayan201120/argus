@@ -20,7 +20,8 @@ logger = get_logger(__name__)
 
 @router.post("/report", status_code=202, response_model=ReportCreateResponse)
 async def create_report(request: QueryRequest) -> ReportCreateResponse:
-    active, _overrides = resolve_request_connectors(request)
+    resolved = resolve_request_connectors(request)
+    active = resolved.active_connectors
     job = await report_job_store.create(request.query)
 
     config = ConnectorConfig(
@@ -33,6 +34,8 @@ async def create_report(request: QueryRequest) -> ReportCreateResponse:
         "job_id": job.job_id,
         "query_length": len(request.query),
         "connectors": [c.connector_id for c in active],
+        "router_strategy": resolved.router_strategy,
+        "matched_profile": resolved.matched_profile,
     })
 
     asyncio.create_task(

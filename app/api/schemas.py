@@ -24,6 +24,14 @@ class ConnectorConfigRequest(BaseModel):
             "connector IDs."
         ),
     )
+    router_strategy: str | None = Field(
+        default=None,
+        description=(
+            "Routing strategy override: 'static' (fixed YAML chains) or "
+            "'semantic' (infer a profile from the query). Defaults to the "
+            "ROUTER_STRATEGY setting."
+        ),
+    )
     timeout_s: int = Field(default=45, ge=5, le=120)
     max_tokens: int = Field(default=4096, ge=256, le=32000)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
@@ -66,6 +74,8 @@ class QueryResponse(BaseModel):
     short_circuited: bool = False
     role_assignments: dict[str, str] = Field(default_factory=dict)
     cache_hit: bool = False
+    router_strategy: str | None = None
+    matched_profile: str | None = None
 
 
 class ConnectorProfile(BaseModel):

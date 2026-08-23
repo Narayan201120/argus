@@ -37,6 +37,35 @@ DEFAULT_PROFILES: dict[str, list[str]] = {
     "fast": ["mistral", "gemini"],
 }
 
+# Router strategies selectable via settings.router_strategy or a
+# per-request model_config.router_strategy override. 'static' preserves
+# the exact pre-Stage-6 behavior; 'semantic' infers a named profile from
+# the query text when the caller did not set one explicitly.
+ROUTER_STRATEGIES: dict[str, str] = {
+    "static": "Fixed YAML preference chains per role (Stage 1 behavior).",
+    "semantic": "Keyword intent classifier picks a named profile per query.",
+}
+
+# Intent lexicon for the semantic router. Keys must name profiles that
+# exist in RoutingConfig.profiles; unknown names are ignored at inference
+# time so removing a profile in YAML also removes it from semantic reach.
+PROFILE_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "research": (
+        "research", "literature", "survey", "sources", "evidence",
+        "state of the art", "papers", "history of", "compare",
+    ),
+    "code": (
+        "code", "bug", "stack trace", "refactor", "compile", "regex",
+        "python", "typescript", "sql", "docker", "function", "api endpoint",
+    ),
+    "analysis": (
+        "analyze", "tradeoff", "trade-offs", "risk", "strategy",
+        "evaluate", "pros and cons", "decision", "benchmark", "optimize",
+        "architecture",
+    ),
+    "fast": ("quick", "briefly", "short answer", "tl;dr", "one-liner"),
+}
+
 
 @dataclass(frozen=True)
 class RoutingConfig:
@@ -100,6 +129,32 @@ class RoleBindingService:
 
     def known_profile(self, profile: str) -> bool:
         return profile in self._config.profiles
+
+    def known_strategy(self, strategy: str) -> bool:
+        return strategy in ROUTER_STRATEGIES
+
+    def infer_profile(self, query: str | None) -> str | None:
+        """Classify a query into a named routing profile.
+
+        Scores each configured profile by counting case-insensitive
+        keyword hits from PROFILE_KEYWORDS. Highest score wins; ties go
+        to the earlier profile in PROFILE_KEYWORDS order. Returns None
+        when no keyword matches or the query is empty.
+        """
+        if not query:
+            return None
+
+        normalized = query.lower()
+        best_profile: str | None = None
+        best_score = 0
+        for profile, keywords in PROFILE_KEYWORDS.items():
+            if profile not in self._config.profiles:
+                continue
+            score = sum(1 for keyword in keywords if keyword in normalized)
+            if score > best_score:
+                best_profile = profile
+                best_score = score
+        return best_profile
 
     def profile_connectors(self, profile: str) -> list[str]:
         return list(self._config.profiles.get(profile, []))
