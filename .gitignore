@@ -49,6 +49,7 @@ dump.rdb
 # Brainstorming / internal docs
 ARGUS_PRD_v1.md
 PROGRESS.md
+DECISIONS.md
 
 # Distribution / packaging
 *.spec

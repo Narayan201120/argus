@@ -46,9 +46,12 @@ The API is available at `http://127.0.0.1:8000`, with interactive docs at `/docs
 ## API
 
 - `GET /` - service metadata
-- `GET /v1/health` - live connector availability
+- `GET /v1/health` - live connector availability + Redis status
 - `GET /v1/models` - registered connector profiles
 - `POST /v1/query` - direct or parallel orchestration
+- `POST /v1/query/stream` - SSE variant: role completion events, streamed synthesis tokens, terminal `final` envelope
+- `POST /v1/report` - start a deep-report job (returns job ID immediately)
+- `GET /v1/report/{job_id}` - poll status; completed jobs carry Markdown
 
 Example request:
 
@@ -72,7 +75,21 @@ A short, single-intent query uses one selected provider directly. Longer or mult
 docker compose up --build
 ```
 
-Docker Compose starts the API and Redis. Redis is provisioned for the next caching/rate-limiting milestone but is not yet used by request handling.
+Docker Compose starts the API and Redis.
+
+## Caching & Rate Limiting
+
+Successful `/v1/query` responses are cached in Redis (TTL configurable via `CACHE_TTL_S`). Identical query + model_config pairs return a cached response with `cache_hit: true`. Requests are rate limited per client IP with a fixed window (`RATE_LIMIT_MAX_REQUESTS` per `RATE_LIMIT_WINDOW_S`; excess requests receive `429`). When Redis is unreachable the API degrades gracefully: caching and rate limiting disable themselves rather than failing requests, and `/v1/health` reports the Redis status.
+
+## Routing Profiles & Role Binding
+
+Role-to-provider preference chains and named profiles live in `config/routing.yaml`. Per request:
+
+- omit both to use every available connector,
+- set `model_config.profile` (e.g. `"fast"`, `"research"`), or
+- set `model_config.connectors` explicitly (wins over profile).
+
+Set `model_config.role_bindings` to override which provider fills `researcher`, `analyzer`, `verifier`, or `synthesizer`. Every response includes `role_assignments` showing the actual provider used per role.
 
 ## Testing
 
@@ -82,7 +99,7 @@ Docker Compose starts the API and Redis. Redis is provisioned for the next cachi
 
 ## Current Scope
 
-This is a backend-only Phase 1 MVP. The next architectural extension is an optional deep-report mode that fans out independent research/analysis tracks by subtask, aggregates them, then writes Markdown. Reviewer-driven repair loops remain a follow-up rather than the default latency path.
+This is a backend-only MVP. The bounded parallel `/v1/query` pipeline remains the fast default path; `POST /v1/report` adds the deep-report mode (planner -> parallel research tracks -> global verification -> writer -> bounded reviewer repair) returning Markdown asynchronously. Streaming (SSE), JWT auth, and metrics endpoints are the next milestones.
 
 ## Security
 
