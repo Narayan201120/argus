@@ -43,6 +43,10 @@ htmlcov/
 # Docker
 *.env.docker
 
+# Local dev server logs
+uvicorn.out.log
+uvicorn.err.log
+
 # Redis / local data
 dump.rdb
 

@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     # Connector defaults
     connector_timeout_s: int = 45
     connector_max_retries: int = 1
+    gemini_model: str = "gemini-3.7-flash"
+    mistral_model: str = "mistral-medium-latest"
 
     # Decomposer
     short_circuit_token_threshold: int = 50

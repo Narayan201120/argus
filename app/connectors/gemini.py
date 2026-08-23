@@ -21,7 +21,7 @@ class GeminiConnector(BaseConnector):
 
     def __init__(self):
         self.api_key = settings.gemini_api_key
-        self.default_model = "gemini-1.5-pro"
+        self.default_model = settings.gemini_model
         self.is_available = bool(self.api_key)
 
     async def query(

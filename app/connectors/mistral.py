@@ -19,7 +19,7 @@ class MistralConnector(BaseConnector):
 
     def __init__(self):
         self.api_key = settings.mistral_api_key
-        self.default_model = "mistral-small-latest"
+        self.default_model = settings.mistral_model
         self.is_available = bool(self.api_key)
 
     async def query(self, prompt, sub_query, config):

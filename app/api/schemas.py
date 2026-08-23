@@ -32,7 +32,7 @@ class ConnectorConfigRequest(BaseModel):
             "ROUTER_STRATEGY setting."
         ),
     )
-    timeout_s: int = Field(default=45, ge=5, le=120)
+    timeout_s: int = Field(default=45, ge=5, le=300)
     max_tokens: int = Field(default=4096, ge=256, le=32000)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
 
