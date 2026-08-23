@@ -8,7 +8,8 @@ from app.api.schemas import QueryRequest
 from app.config import settings
 from app.connectors.base import BaseConnector
 from app.connectors.registry import registry
-from app.orchestration.binding import binding_service
+from app.metrics import ROUTER_DECISIONS
+from app.orchestration.binding import binding_service, semantic_router
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -26,13 +27,14 @@ class ResolvedRouting:
     matched_profile: str | None
 
 
-def resolve_request_connectors(request: QueryRequest) -> ResolvedRouting:
+async def resolve_request_connectors(request: QueryRequest) -> ResolvedRouting:
     """Validate model_config and resolve the active connector list.
 
     Applies the selected router strategy ('static' keeps fixed YAML
-    chains; 'semantic' infers a named profile from the query when the
-    caller set none). Raises HTTPException(422/503) with the canonical
-    error messages shared by the query, stream, and report routes.
+    chains; 'semantic' infers a named profile from the query via
+    embeddings with keyword fallback when the caller set none). Raises
+    HTTPException(422/503) with the canonical error messages shared by
+    the query, stream, and report routes.
     """
     mc = request.model_config_
     overrides = mc.role_bindings or {}
@@ -54,12 +56,16 @@ def resolve_request_connectors(request: QueryRequest) -> ResolvedRouting:
     matched_profile: str | None = None
     effective_profile = mc.profile
     if router_strategy == "semantic" and effective_profile is None:
-        matched_profile = binding_service.infer_profile(request.query)
+        matched_profile, method = await semantic_router.infer_profile(request.query)
+        ROUTER_DECISIONS.labels(
+            method=method, matched_profile=matched_profile or "none"
+        ).inc()
         if matched_profile is not None:
             effective_profile = matched_profile
             logger.info({
                 "message": "Semantic router inferred profile",
                 "profile": matched_profile,
+                "method": method,
                 "query_length": len(request.query),
             })
 

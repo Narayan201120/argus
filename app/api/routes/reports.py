@@ -21,7 +21,7 @@ logger = get_logger(__name__)
 
 @router.post("/report", status_code=202, response_model=ReportCreateResponse)
 async def create_report(request: QueryRequest) -> ReportCreateResponse:
-    resolved = resolve_request_connectors(request)
+    resolved = await resolve_request_connectors(request)
     active = resolved.active_connectors
     job = await report_job_store.create(request.query)
     REPORT_JOBS.labels(status="accepted").inc()

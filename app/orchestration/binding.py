@@ -6,6 +6,7 @@ defaults when the file is missing or malformed, mirroring the prompt
 loader fallback pattern.
 """
 
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -13,6 +14,7 @@ import yaml
 
 from app.config import settings
 from app.connectors.base import BaseConnector
+from app.embeddings import cosine_similarity, get_embedder
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -120,11 +122,13 @@ def load_routing_config(path: str | Path) -> RoutingConfig:
             profiles[str(name)] = ProfileDefinition(connectors=tuple(str(c) for c in entry))
         elif isinstance(entry, dict) and isinstance(entry.get("connectors"), list):
             keywords = entry.get("keywords")
+            raw_description = entry.get("description")
             profiles[str(name)] = ProfileDefinition(
                 connectors=tuple(str(c) for c in entry["connectors"]),
                 keywords=(
                     tuple(str(k) for k in keywords) if isinstance(keywords, list) else ()
                 ),
+                description=str(raw_description) if raw_description else "",
             )
 
     merged_roles = {k: list(v) for k, v in DEFAULT_ROLES.items()}
@@ -215,3 +219,88 @@ class RoleBindingService:
 
 
 binding_service = RoleBindingService.load()
+
+SEMANTIC_EMBEDDING_COOLDOWN_S = 60.0
+
+
+class SemanticRouter:
+    """Embeddings-first intent classifier with keyword fallback.
+
+    On each 'semantic' lookup: embed the query once, cosine-match against
+    cached profile-description vectors, and accept the best match when it
+    clears ROUTER_EMBEDDING_THRESHOLD. Any failure (no key, provider
+    error, quota) starts a cooldown during which only the keyword
+    classifier runs - a broken embedding backend can never fail requests.
+    """
+
+    def __init__(
+        self,
+        service: RoleBindingService,
+        embedder_factory=None,
+        cooldown_s: float = SEMANTIC_EMBEDDING_COOLDOWN_S,
+    ):
+        self._service = service
+        self._embedder_factory = embedder_factory or get_embedder
+        self._cooldown_s = cooldown_s
+        self._profile_vectors: dict[str, list[float]] | None = None
+        self._cooldown_until = 0.0
+
+    @staticmethod
+    def _description_for(name: str, definition) -> str:
+        if definition.description:
+            return definition.description
+        lexicon = definition.keywords or PROFILE_KEYWORDS.get(name, ())
+        if lexicon:
+            return f"{name} routing profile: {', '.join(lexicon)}"
+        return f"{name} routing profile"
+
+    async def _ensure_vectors(self, embedder) -> dict[str, list[float]]:
+        if self._profile_vectors is not None:
+            return self._profile_vectors
+        profiles = self._service.config.profiles
+        texts = [self._description_for(name, d) for name, d in profiles.items()]
+        vectors = await embedder.embed(texts)
+        self._profile_vectors = dict(zip(profiles.keys(), vectors, strict=True))
+        return self._profile_vectors
+
+    async def infer_profile(self, query: str | None) -> tuple[str | None, str]:
+        """Classify a query. Returns (profile, method).
+
+        method is one of 'embedding', 'keyword', or 'none' so callers and
+        metrics can see which mechanism actually decided.
+        """
+        if not query:
+            return None, "none"
+
+        if time.monotonic() >= self._cooldown_until:
+            embedder = self._embedder_factory()
+            if embedder is not None:
+                try:
+                    vectors = await self._ensure_vectors(embedder)
+                    [query_vector] = await embedder.embed([query])
+                    best_name: str | None = None
+                    best_score = -1.0
+                    for profile_name, vector in vectors.items():
+                        score = cosine_similarity(query_vector, vector)
+                        if score > best_score:
+                            best_name, best_score = profile_name, score
+                    threshold = settings.router_embedding_threshold
+                    if best_name is not None and best_score >= threshold:
+                        logger.info({
+                            "message": "Semantic router matched via embeddings",
+                            "profile": best_name,
+                            "score": round(best_score, 4),
+                        })
+                        return best_name, "embedding"
+                except Exception as exc:  # noqa: BLE001 - degrade, never fail the request
+                    self._cooldown_until = time.monotonic() + self._cooldown_s
+                    logger.warning({
+                        "message": "Embedding router unavailable; using keywords",
+                        "error": str(exc),
+                    })
+
+        matched = self._service.infer_profile(query)
+        return (matched, "keyword") if matched else (None, "none")
+
+
+semantic_router = SemanticRouter(binding_service)

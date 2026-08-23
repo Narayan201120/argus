@@ -1,11 +1,19 @@
-"""Stage 6 - router strategy selection (static vs semantic)."""
+"""Stage 6/P2-1 - router strategy selection (static vs semantic)."""
 
+import time
+
+import pytest
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.connectors.base import BaseConnector, ConnectorResponse, ConnectorStatus, TokenUsage
 from app.connectors.registry import registry
 from app.main import app
-from app.orchestration.binding import ROUTER_STRATEGIES, RoleBindingService
+from app.orchestration.binding import (
+    ROUTER_STRATEGIES,
+    RoleBindingService,
+    SemanticRouter,
+)
 
 client = TestClient(app)
 
@@ -158,6 +166,129 @@ def test_explicit_profile_wins_over_semantic_inference(monkeypatch):
     assert data["matched_profile"] is None
     # explicit research pool honored; inference suppressed
     assert data["role_assignments"]["direct"] == "claude"
+
+
+# ── Stage P2-1: embeddings-first semantic router ────────────────────────────
+
+
+class ScriptedEmbedder:
+    """Returns one pre-scripted batch of vectors per embed() call."""
+
+    def __init__(self, batches: list[list[list[float]]], fail: bool = False):
+        self._batches = batches
+        self._fail = fail
+        self.calls = 0
+
+    async def embed(self, texts):
+        self.calls += 1
+        if self._fail:
+            raise RuntimeError("embedding provider down")
+        batch = self._batches[self.calls - 1]
+        assert len(batch) == len(texts), f"scripted {len(batch)} vectors, asked {len(texts)}"
+        return [list(vector) for vector in batch]
+
+
+REAL_PROFILE_ORDER = ["research", "code", "analysis", "fast"]
+
+
+def _unit_batches_for(query_vector: list[float]) -> list[list[list[float]]]:
+    unit = {
+        "research": [1.0, 0.0, 0.0, 0.0],
+        "code": [0.0, 1.0, 0.0, 0.0],
+        "analysis": [0.0, 0.0, 1.0, 0.0],
+        "fast": [0.0, 0.0, 0.0, 1.0],
+    }
+    warmup = [unit[name] for name in REAL_PROFILE_ORDER]
+    return [warmup, [query_vector]]
+
+
+@pytest.fixture
+def router_with_real_profiles():
+    """Fresh SemanticRouter over the real routing config; no vectors yet."""
+    return SemanticRouter(RoleBindingService.load(), embedder_factory=lambda: None)
+
+
+@pytest.mark.asyncio
+async def test_semantic_router_empty_query_skips_embeddings(router_with_real_profiles):
+    profile, method = await router_with_real_profiles.infer_profile("")
+    assert profile is None
+    assert method == "none"
+
+
+@pytest.mark.asyncio
+async def test_embedding_match_above_threshold(monkeypatch):
+    # Query vector identical to research's unit vector -> cosine 1.0.
+    fake = ScriptedEmbedder(_unit_batches_for([1.0, 0.0, 0.0, 0.0]))
+    router = SemanticRouter(RoleBindingService.load(), embedder_factory=lambda: fake)
+
+    monkeypatch.setattr(settings, "router_embedding_threshold", 0.9)
+    profile, method = await router.infer_profile("survey prior work on retrieval")
+    assert (profile, method) == ("research", "embedding")
+
+
+@pytest.mark.asyncio
+async def test_below_threshold_falls_back_to_keywords(monkeypatch):
+    # Query leans toward research (0.6) but the threshold is 0.9, so the
+    # embedding match is rejected and the keyword classifier decides:
+    # 'quick'/'short answer' hits the fast lexicon.
+    fake = ScriptedEmbedder(_unit_batches_for([0.6, 0.8, 0.0, 0.0]))
+    router = SemanticRouter(RoleBindingService.load(), embedder_factory=lambda: fake)
+
+    monkeypatch.setattr(settings, "router_embedding_threshold", 0.9)
+    profile, method = await router.infer_profile("quick short answer about ARGUS")
+    assert (profile, method) == ("fast", "keyword")
+
+
+@pytest.mark.asyncio
+async def test_embedder_failure_starts_cooldown_and_uses_keywords():
+    failing = ScriptedEmbedder([], fail=True)
+    router = SemanticRouter(
+        RoleBindingService.load(), embedder_factory=lambda: failing, cooldown_s=60.0
+    )
+
+    profile, method = await router.infer_profile("fix this python bug in my function")
+    assert method == "keyword"
+    assert profile == "code"
+    assert router._cooldown_until > time.monotonic()
+
+    # Within the cooldown the factory is not even invoked
+    profile2, method2 = await router.infer_profile("another python bug")
+    assert failing.calls == 1
+    assert method2 == "keyword"
+
+
+@pytest.mark.asyncio
+async def test_router_decision_metric_recorded(monkeypatch):
+    from prometheus_client import REGISTRY
+
+    from app.api.routes import shared as shared_module
+
+    # Embedding match rejected (0.6 < 0.9) -> keyword decides -> fast.
+    fake = ScriptedEmbedder(_unit_batches_for([0.6, 0.8, 0.0, 0.0]))
+    fresh = SemanticRouter(RoleBindingService.load(), embedder_factory=lambda: fake)
+    monkeypatch.setattr(shared_module, "semantic_router", fresh)
+    monkeypatch.setattr(settings, "router_embedding_threshold", 0.9)
+    monkeypatch.setattr(registry, "_connectors", {
+        "gemini": StubConnector("gemini"),
+        "openai": StubConnector("openai"),
+        "claude": StubConnector("claude"),
+        "mistral": StubConnector("mistral"),
+    })
+
+    response = client.post("/v1/query", json={
+        "query": "quick short answer about ARGUS",
+        "model_config": {"router_strategy": "semantic"},
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["matched_profile"] == "fast"
+    assert data["router_strategy"] == "semantic"
+
+    value = REGISTRY.get_sample_value(
+        "argus_router_decisions_total",
+        {"method": "keyword", "matched_profile": "fast"},
+    )
+    assert value is not None and value >= 1.0
 
 
 def test_cache_keys_distinguish_router_strategies(monkeypatch):

@@ -1,6 +1,15 @@
 import pytest
 
+from app.config import settings
 from app.connectors.base import BaseConnector, ConnectorResponse, ConnectorStatus, TokenUsage
+
+
+@pytest.fixture(autouse=True)
+def _no_live_embeddings(monkeypatch):
+    """Mock-only discipline (DEC-008): tests never call real embedding
+    APIs even when local .env has provider keys. Embedding-specific tests
+    override this by setting the provider themselves."""
+    monkeypatch.setattr(settings, "router_embedding_provider", "none")
 
 
 class MockConnector(BaseConnector):

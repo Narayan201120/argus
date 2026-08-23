@@ -62,6 +62,11 @@ REPORT_JOBS = Counter(
     "Deep-report jobs by terminal state.",
     ["status"],
 )
+ROUTER_DECISIONS = Counter(
+    "argus_router_decisions_total",
+    "Semantic routing decisions by deciding mechanism and matched profile.",
+    ["method", "matched_profile"],
+)
 
 
 def record_role_outcome(role: str, connector_id: str, status: str, latency_ms: int) -> None:

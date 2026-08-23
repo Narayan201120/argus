@@ -82,7 +82,7 @@ def _model_status(role: StreamRole, response: ConnectorResponse) -> ModelStatus:
 @router.post("/query/stream")
 async def stream_query(request: QueryRequest) -> StreamingResponse:
     request_id = str(uuid.uuid4())
-    resolved = resolve_request_connectors(request)
+    resolved = await resolve_request_connectors(request)
     active_connectors = resolved.active_connectors
     overrides = resolved.overrides
     connector_config = ConnectorConfig(

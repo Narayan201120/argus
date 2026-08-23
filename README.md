@@ -96,9 +96,9 @@ Set `model_config.role_bindings` to override which provider fills `researcher`, 
 `ROUTER_STRATEGY` (default `"static"`) selects how the connector pool is chosen; a request can override it via `model_config.router_strategy` (unknown values return `422`):
 
 - `static` - fixed YAML preference chains per role, exactly as configured in `config/routing.yaml`.
-- `semantic` - when the caller set no explicit profile, a keyword intent classifier infers one of the named profiles from the query text (`research`, `code`, `analysis`, `fast`). An explicit `model_config.profile` or `model_config.connectors` always wins over inference.
+- `semantic` - when the caller set no explicit profile, the query is classified against profile descriptions: **embeddings-first** (Gemini/OpenAI embeddings, cosine similarity, `ROUTER_EMBEDDING_THRESHOLD`) with automatic fallback to a keyword classifier on weak matches or embedding failures (60s cooldown). An explicit `model_config.profile` or `model_config.connectors` always wins over inference.
 
-Responses expose `router_strategy` and `matched_profile` so callers can see which path served the request.
+Responses expose `router_strategy` and `matched_profile` so callers can see which path served the request; `argus_router_decisions_total{method,matched_profile}` tracks which mechanism decided.
 
 ## Observability
 

@@ -55,5 +55,10 @@ class Settings(BaseSettings):
     routing_config_path: str = "config/routing.yaml"
     router_strategy: str = "static"
 
+    # Semantic router embeddings ('auto' prefers Gemini when its key exists)
+    router_embedding_provider: str = "auto"
+    router_embedding_model: str | None = None
+    router_embedding_threshold: float = 0.35
+
 
 settings = Settings()

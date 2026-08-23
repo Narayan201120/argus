@@ -113,7 +113,7 @@ async def run_query(request: QueryRequest) -> QueryResponse:
         CACHE_OPERATIONS.labels(result="miss").inc()
 
     mc = request.model_config_
-    resolved = resolve_request_connectors(request)
+    resolved = await resolve_request_connectors(request)
     active_connectors = resolved.active_connectors
     role_binding_overrides = resolved.overrides
 

@@ -21,19 +21,23 @@ roles:
 #
 # Two accepted forms per profile:
 #   list form:            profile: [connector, ...]
-#   rich form (below):    connectors + optional keywords used by the
-#                         'semantic' router's keyword classifier. The
-#                         keywords here override the built-in defaults.
+#   rich form (below):    connectors + optional keywords (keyword
+#                         classifier) + optional description (used by
+#                         the embeddings-first semantic matcher).
 profiles:
   research:
     connectors: [gemini, claude, mistral, openai]
     keywords: [research, literature, survey, sources, evidence, state of the art, papers, history of, compare]
+    description: "Academic research, literature surveys, gathering sources and evidence, comparing prior work"
   code:
     connectors: [openai, claude, mistral, gemini]
     keywords: [code, bug, stack trace, refactor, compile, regex, python, typescript, sql, docker, function, api endpoint]
+    description: "Programming tasks, debugging, code review, refactoring, build errors and developer tooling"
   analysis:
     connectors: [claude, openai, mistral, gemini]
     keywords: [analyze, tradeoff, trade-offs, risk, strategy, evaluate, pros and cons, decision, benchmark, optimize, architecture]
+    description: "Critical analysis of tradeoffs, risks, strategy evaluation and decision support"
   fast:
     connectors: [mistral, gemini]
     keywords: [quick, briefly, short answer, tl;dr, one-liner]
+    description: "Quick concise answers with minimal latency for simple questions"
