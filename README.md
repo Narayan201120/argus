@@ -141,7 +141,7 @@ Exit codes: `0` passed, `1` failures, `2` guard refused, `3` usage error.
 
 ## Current Scope
 
-This is a backend-only MVP. The bounded parallel `/v1/query` pipeline remains the fast default path; `POST /v1/report` adds the deep-report mode (planner -> parallel research tracks -> global verification -> writer -> bounded reviewer repair) returning Markdown asynchronously. Shipped alongside it: SSE streaming (`/v1/query/stream`), opt-in JWT auth, Redis caching/rate limiting, router strategies (`static`/`semantic`), and Prometheus metrics. Deferred Phase 2 items: multimodal inputs, OpenTelemetry tracing, OAuth2, web UI, Kubernetes manifests.
+This is a backend-only MVP. The bounded parallel `/v1/query` pipeline remains the fast default path; `POST /v1/report` adds the deep-report mode (planner -> parallel research tracks -> global verification -> writer -> bounded reviewer repair) returning Markdown asynchronously. Shipped alongside it: SSE streaming (`/v1/query/stream`), opt-in JWT auth, Redis caching/rate limiting, an embeddings-first semantic router (`static`/`semantic` strategies with keyword fallback), Sarvam speech-to-text input (`/v1/transcribe`, `/v1/query/audio`), Prometheus metrics with a provisioned Grafana dashboard, and opt-in OpenTelemetry tracing. Deferred: multimodal inputs beyond audio, OAuth2, conversation memory, web UI, Kubernetes.
 
 ## Security
 

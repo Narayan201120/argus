@@ -30,7 +30,7 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 DEFAULT_QUERY = "What is the ARGUS architecture?"
 REPORT_TIMEOUT_S = 300
 
-ALL_CHECKS = ("health", "models", "query", "stream", "report")
+ALL_CHECKS = ("health", "models", "query", "stream", "report", "audio")
 
 
 # ── Pure validators (unit-testable without network) ─────────────────────────
@@ -72,6 +72,15 @@ def validate_final_event(data: dict) -> list[str]:
     failures = validate_query_response(data)
     if data.get("router_strategy") not in {"static", "semantic"}:
         failures.append(f"final.router_strategy={data.get('router_strategy')!r} unexpected")
+    return failures
+
+
+def validate_transcription(payload: dict) -> list[str]:
+    failures: list[str] = []
+    if not payload.get("text"):
+        failures.append("transcription.text is empty")
+    if not payload.get("model"):
+        failures.append("transcription.model is missing")
     return failures
 
 
@@ -154,6 +163,34 @@ def run_report_check(client: httpx.Client, query: str) -> list[str]:
         return [f"report: request failed: {exc}"]
 
 
+def run_audio_check(client: httpx.Client) -> list[str]:
+    """Upload a small audio file to /v1/transcribe.
+
+    Requires ARGUS_SMOKE_AUDIO_FILE to point at a short (<30s) wav/mp3.
+    Skips (with a note, no failure) when the variable is unset - credits
+    are never spent implicitly.
+    """
+    audio_path = os.environ.get("ARGUS_SMOKE_AUDIO_FILE")
+    if not audio_path:
+        print("(audio check skipped: set ARGUS_SMOKE_AUDIO_FILE to a <30s file)")
+        return []
+
+    try:
+        with open(audio_path, "rb") as handle:
+            content = handle.read()
+    except OSError as exc:
+        return [f"audio: cannot read ARGUS_SMOKE_AUDIO_FILE: {exc}"]
+
+    filename = os.path.basename(audio_path)
+    try:
+        response = client.post("/v1/transcribe", files={"file": (filename, content)})
+    except httpx.HTTPError as exc:
+        return [f"audio: request failed: {exc}"]
+    if response.status_code != 200:
+        return [f"audio: HTTP {response.status_code}: {response.text[:200]}"]
+    return [f"audio.transcription.{f}" for f in validate_transcription(response.json())]
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
@@ -201,6 +238,8 @@ def main(argv: list[str] | None = None) -> int:
             failures += run_stream_check(client, args.query)
         if "report" in selected:
             failures += run_report_check(client, args.query)
+        if "audio" in selected:
+            failures += run_audio_check(client)
 
     if failures:
         for failure in failures:

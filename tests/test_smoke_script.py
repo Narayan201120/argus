@@ -14,6 +14,23 @@ def test_main_refuses_to_run_without_unlock():
     assert smoke_live.main([]) == 2
 
 
+def test_validate_transcription_requires_text_and_model():
+    good = {"text": "what is ARGUS", "language_code": "en-IN", "model": "saaras:v3"}
+    assert smoke_live.validate_transcription(good) == []
+
+    failures = smoke_live.validate_transcription({})
+    assert any("text" in f for f in failures)
+    assert any("model" in f for f in failures)
+
+
+def test_audio_check_skips_without_env(monkeypatch, capsys):
+    monkeypatch.delenv("ARGUS_SMOKE_AUDIO_FILE", raising=False)
+    # client is unused on the skip path
+    assert smoke_live.run_audio_check(None) == []
+    out = capsys.readouterr().out
+    assert "audio check skipped" in out
+
+
 def test_parser_defaults_and_only_filter():
     parser = smoke_live.build_parser()
     args = parser.parse_args([])
