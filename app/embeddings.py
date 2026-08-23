@@ -8,7 +8,6 @@ vectors needs no vector database.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
 
 from app.config import settings
 
@@ -47,28 +46,20 @@ class OpenAIEmbedder(BaseEmbedder):
 
 class GeminiEmbedder(BaseEmbedder):
     def __init__(self, model: str | None = None):
-        self._model = model or "models/text-embedding-004"
+        self._model = model or "text-embedding-004"
         self._api_key = settings.gemini_api_key
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         import asyncio
 
-        import google.generativeai as genai
+        from google import genai
 
-        genai.configure(api_key=self._api_key)
-
-        def _embed_batch():
-            return genai.embed_content(model=self._model, content=texts)
-
-        raw: Any = await asyncio.to_thread(_embed_batch)
-        embeddings: Any | None = None
-        if isinstance(raw, dict):
-            embeddings = raw.get("embedding") or raw.get("embeddings")
-        if not embeddings:
-            raise ValueError("Gemini embedding response contained no vectors")
-        if isinstance(embeddings[0], dict):
-            embeddings = [item["values"] for item in embeddings]
-        return [list(vector) for vector in embeddings]
+        client = genai.Client(api_key=self._api_key)
+        result = await asyncio.to_thread(
+            client.models.embed_content, model=self._model, contents=texts
+        )
+        embedding_objects = getattr(result, "embeddings", None) or []
+        return [list(item.values) for item in embedding_objects]
 
 
 def get_embedder() -> BaseEmbedder | None:

@@ -25,10 +25,11 @@ class Settings(BaseSettings):
     cache_ttl_s: int = 3600
     cache_max_bytes: int = 262144
 
-    # Rate limiting (fixed window per client)
+    # Rate limiting (per client)
     rate_limit_enabled: bool = True
     rate_limit_max_requests: int = 60
     rate_limit_window_s: int = 60
+    rate_limit_algorithm: str = "fixed"  # fixed | sliding
 
     # Deep-report pipeline
     report_max_repair_rounds: int = 1

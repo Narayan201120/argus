@@ -69,20 +69,68 @@ def test_fail_open_without_redis(monkeypatch):
 def test_subject_keyed_buckets_separate_from_ip(fake_redis, monkeypatch):
     from starlette.requests import Request
 
-    from app.ratelimit import key_for
+    from app.ratelimit import identity_for
 
     monkeypatch.setattr(holder, "client", fake_redis)
 
     request = Request({"type": "http", "client": ("203.0.113.9", 1234)})
-    ip_key = key_for(request)
+    ip_identity = identity_for(request)
 
     request.state.subject = "alice"
-    alice_key = key_for(request)
+    alice_identity = identity_for(request)
 
     request.state.subject = "bob"
-    bob_key = key_for(request)
+    bob_identity = identity_for(request)
 
-    assert ip_key.startswith("argus:rl:ip:203.0.113.9:")
-    assert alice_key.startswith("argus:rl:sub:alice:")
-    assert bob_key.startswith("argus:rl:sub:bob:")
-    assert len({ip_key, alice_key, bob_key}) == 3
+    assert ip_identity == "ip:203.0.113.9"
+    assert alice_identity == "sub:alice"
+    assert bob_identity == "sub:bob"
+
+
+@pytest.mark.asyncio
+async def test_sliding_allows_max_then_blocks_and_recovers(fake_redis, monkeypatch):
+    from app.ratelimit import sliding_check
+
+    monkeypatch.setattr(settings, "rate_limit_max_requests", 3)
+
+    base = 1000.0
+    results = []
+    for offset in range(3):  # three hits inside the window are allowed
+        results.append(await sliding_check(fake_redis, "alice", now=base + offset))
+    assert all(allowed for allowed, _ in results)
+
+    allowed, retry_after = await sliding_check(fake_redis, "alice", now=base + 3)
+    assert allowed is False
+    assert retry_after >= 1
+
+    # Once every hit ages out of the window, capacity returns.
+    allowed_late, _ = await sliding_check(fake_redis, "alice", now=base + 61)
+    assert allowed_late is True
+
+
+@pytest.mark.asyncio
+async def test_sliding_retry_after_derived_from_oldest_hit(fake_redis, monkeypatch):
+    from app.ratelimit import sliding_check
+
+    monkeypatch.setattr(settings, "rate_limit_max_requests", 2)
+
+    base = 2000.0
+    await sliding_check(fake_redis, "bob", now=base)          # expires at 2060
+    allowed, _ = await sliding_check(fake_redis, "bob", now=base + 10)
+    assert allowed is True
+
+    allowed, retry_after = await sliding_check(fake_redis, "bob", now=base + 11)
+    assert allowed is False
+    # oldest hit at base -> free again at base+window; ceil-ish remainder:
+    assert retry_after == int(60 - 11) + 1
+
+
+@pytest.mark.asyncio
+async def test_sliding_identities_are_independent(fake_redis, monkeypatch):
+    from app.ratelimit import sliding_check
+
+    monkeypatch.setattr(settings, "rate_limit_max_requests", 1)
+    alice_allowed, _ = await sliding_check(fake_redis, "sub:alice", now=1000)
+    bob_allowed, _ = await sliding_check(fake_redis, "sub:bob", now=1000)
+    assert alice_allowed is True
+    assert bob_allowed is True

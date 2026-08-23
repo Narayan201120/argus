@@ -82,23 +82,15 @@ def test_classify_plain_error_stays_error():
 
 @pytest.mark.asyncio
 async def test_gemini_maps_quota_error_to_rate_limited(monkeypatch):
+    from types import SimpleNamespace
+
     connector = GeminiConnector()
     connector.api_key = "test-key"
     connector.is_available = True
 
-    import google.generativeai as genai
-
     quota_error = Exception("429 Resource has been exhausted (quota exceeded).")
-
-    class FakeModel:
-        def __init__(self, model):
-            self.model = model
-
-        def generate_content(self, prompt):
-            raise quota_error
-
-    monkeypatch.setattr(genai, "configure", lambda **kwargs: None)
-    monkeypatch.setattr(genai, "GenerativeModel", FakeModel)
+    fake_models = SimpleNamespace(generate_content=lambda **kwargs: (_ for _ in ()).throw(quota_error))
+    connector._client = SimpleNamespace(models=fake_models)
 
     response = await connector.query("prompt", "sub", ConnectorConfig())
     assert response.status == ConnectorStatus.RATE_LIMITED

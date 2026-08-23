@@ -64,4 +64,4 @@ def test_get_embedder_auto_prefers_gemini(gemini_key, openai_key, expected, monk
 def test_embedder_model_defaults():
     assert OpenAIEmbedder()._model == "text-embedding-3-small"
     assert OpenAIEmbedder("my-model")._model == "my-model"
-    assert GeminiEmbedder()._model == "models/text-embedding-004"
+    assert GeminiEmbedder()._model == "text-embedding-004"

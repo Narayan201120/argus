@@ -128,6 +128,43 @@ def test_startup_registers_all_connector_implementations():
     }
 
 
+def test_parallel_role_failure_preserves_rate_limited_status(monkeypatch):
+    class RateLimitedForResearcher(StubConnector):
+        async def query(self, prompt, sub_query, config):
+            if '"role": "researcher"' in sub_query:
+                return ConnectorResponse(
+                    model_id=self.connector_id,
+                    content="",
+                    latency_ms=40,
+                    token_usage=TokenUsage(0, 0, 0),
+                    status=ConnectorStatus.RATE_LIMITED,
+                    error="429 You exceeded your current quota.",
+                    sub_query=sub_query,
+                    retry_after_s=12.0,
+                )
+            return await super().query(prompt, sub_query, config)
+
+    stub = RateLimitedForResearcher("mistral")
+    monkeypatch.setattr(registry, "_connectors", {"mistral": stub})
+    long_query = " ".join(
+        ["Explain the ARGUS architecture and compare its latency tradeoffs."] * 10
+    )
+
+    response = client.post("/v1/query", json={
+        "query": long_query,
+        "model_config": {"connectors": ["mistral"]},
+    })
+
+    assert response.status_code == 200
+    statuses = {m["role"]: m for m in response.json()["model_statuses"]}
+    assert statuses["researcher"]["status"] == "rate_limited"
+    assert statuses["researcher"]["retry_after_s"] == 12.0
+    assert "quota" in (statuses["researcher"]["error"] or "")
+    assert statuses["analyzer"]["status"] == "success"
+    assert statuses["verifier"]["status"] == "success"
+    assert response.json()["result"]  # synthesis continues on partial success
+
+
 def test_parallel_query_reports_role_assignments(monkeypatch):
     mistral = StubConnector("mistral")
     gemini = StubConnector("gemini")

@@ -24,6 +24,13 @@ class GeminiConnector(BaseConnector):
         self.api_key = settings.gemini_api_key
         self.default_model = settings.gemini_model
         self.is_available = bool(self.api_key)
+        # New unified SDK (google-genai); the legacy google-generativeai
+        # package is deprecated upstream.
+        self._client = None
+        if self.api_key:
+            from google import genai
+
+            self._client = genai.Client(api_key=self.api_key)
 
     async def query(
         self,
@@ -34,7 +41,7 @@ class GeminiConnector(BaseConnector):
         start = time.monotonic()
         model = config.model_override or self.default_model
 
-        if not self.api_key:
+        if not self.api_key or self._client is None:
             return ConnectorResponse(
                 model_id=model,
                 content="",
@@ -44,20 +51,28 @@ class GeminiConnector(BaseConnector):
                 error="GEMINI_API_KEY not configured",
                 sub_query=sub_query,
             )
+        client = self._client
 
         try:
-            import google.generativeai as genai
-
-            genai.configure(api_key=self.api_key)
-            client = genai.GenerativeModel(model)
+            from google.genai import types
 
             full_prompt = (
                 f"Original user query (for context only): {prompt}\n\n"
                 f"Your specific task: {sub_query}"
             )
 
+            def _generate():
+                return client.models.generate_content(
+                    model=model,
+                    contents=full_prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=config.temperature,
+                        max_output_tokens=config.max_tokens,
+                    ),
+                )
+
             response = await asyncio.wait_for(
-                asyncio.to_thread(client.generate_content, full_prompt),
+                asyncio.to_thread(_generate),
                 timeout=config.timeout_s,
             )
 
@@ -65,10 +80,11 @@ class GeminiConnector(BaseConnector):
             content = response.text or ""
 
             usage = TokenUsage()
-            if hasattr(response, "usage_metadata") and response.usage_metadata:
-                usage.prompt_tokens = getattr(response.usage_metadata, "prompt_token_count", 0)
-                usage.completion_tokens = getattr(response.usage_metadata, "candidates_token_count", 0)
-                usage.total_tokens = getattr(response.usage_metadata, "total_token_count", 0)
+            usage_meta = getattr(response, "usage_metadata", None)
+            if usage_meta:
+                usage.prompt_tokens = getattr(usage_meta, "prompt_token_count", 0) or 0
+                usage.completion_tokens = getattr(usage_meta, "candidates_token_count", 0) or 0
+                usage.total_tokens = getattr(usage_meta, "total_token_count", 0) or 0
 
             return ConnectorResponse(
                 model_id=model,

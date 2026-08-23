@@ -96,3 +96,24 @@ async def test_error_is_not_retried():
     )
     assert response.status == ConnectorStatus.ERROR
     assert connector.calls == 1
+
+
+def test_role_task_error_preserves_response_and_hint():
+    from app.orchestration.workers import RoleTaskError
+
+    response = ConnectorResponse(
+        model_id="gemini",
+        content="",
+        latency_ms=40,
+        token_usage=TokenUsage(),
+        status=ConnectorStatus.RATE_LIMITED,
+        error="429 You exceeded your current quota.",
+        retry_after_s=8.0,
+    )
+    error = RoleTaskError(role="researcher", response=response)
+
+    assert error.role == "researcher"
+    assert error.response.status == ConnectorStatus.RATE_LIMITED
+    assert error.response.retry_after_s == 8.0
+    assert "provider rate limited" in str(error)
+    assert "retry_after_s=8.0" in str(error)

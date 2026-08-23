@@ -20,6 +20,7 @@ from app.orchestration.aggregator import synthesize
 from app.orchestration.binding import binding_service
 from app.orchestration.decomposer import _is_simple_query, build_parallel_plan
 from app.orchestration.workers import (
+    RoleTaskError,
     WorkerOutcome,
     _query_with_retry,
     run_analysis_task,
@@ -43,7 +44,21 @@ def _build_status(
     fallback_latency_ms: int,
     role: str,
 ) -> ConnectorResponse:
-    if isinstance(output, BaseException):
+    if isinstance(output, RoleTaskError):
+        # Preserve the provider's TRUE status (rate_limited/timeout/...)
+        # plus its retry hint instead of collapsing to generic error.
+        source = output.response
+        response = ConnectorResponse(
+            model_id=connector_id,
+            content="",
+            latency_ms=max(source.latency_ms, 0),
+            token_usage=source.token_usage or TokenUsage(),
+            status=source.status,
+            error=source.error,
+            sub_query=objective,
+            retry_after_s=source.retry_after_s,
+        )
+    elif isinstance(output, BaseException):
         response = ConnectorResponse(
             model_id=connector_id,
             content="",

@@ -110,6 +110,24 @@ class WorkerOutcome(Generic[ResultT]):
     response: ConnectorResponse
 
 
+class RoleTaskError(Exception):
+    """Worker failure that preserves the underlying ConnectorResponse.
+
+    Raised on non-success connector replies so the parallel path can
+    surface the TRUE provider status (rate_limited, timeout, ...) and
+    retry hints instead of collapsing everything to a generic error.
+    """
+
+    def __init__(self, role: str, response: ConnectorResponse):
+        self.role = role
+        self.response = response
+        detail = response.error or response.status.value
+        if response.status == ConnectorStatus.RATE_LIMITED:
+            wait = f"retry_after_s={response.retry_after_s}" if response.retry_after_s else "no retry hint"
+            detail = f"provider rate limited ({wait}): {detail}"
+        super().__init__(f"{role.capitalize()} task failed: {detail}")
+
+
 async def _query_with_retry(
     connector: BaseConnector,
     prompt: str,
@@ -164,11 +182,7 @@ async def _run_role_task(
     )
 
     if response.status != ConnectorStatus.SUCCESS or not response.content:
-        detail = response.error or response.status.value
-        if response.status == ConnectorStatus.RATE_LIMITED:
-            wait = f"retry_after_s={response.retry_after_s}" if response.retry_after_s else "no retry hint"
-            detail = f"provider rate limited ({wait}): {detail}"
-        raise ValueError(f"{role.capitalize()} task failed: {detail}")
+        raise RoleTaskError(role=role, response=response)
 
     result = _parse_role_result(response.content, result_model)
     return WorkerOutcome(result=result, response=response)
