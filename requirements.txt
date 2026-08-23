@@ -34,3 +34,7 @@ pyjwt>=2.8.0
 
 # Metrics
 prometheus-client>=0.20.0
+
+# Tooling (CI + local stage gate)
+ruff>=0.5.0
+mypy>=1.10.0

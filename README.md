@@ -110,9 +110,26 @@ Responses expose `router_strategy` and `matched_profile` so callers can see whic
 .\venv\Scripts\python.exe -m pytest -q
 ```
 
+CI (`.github/workflows/ci.yml`) runs the full gate on every push to `main` and every PR: `ruff check .`, `mypy app scripts`, `compileall`, and the mock-only pytest suite - no API keys or Redis required.
+
+### Live smoke test
+
+`scripts/smoke_live.py` exercises a **running** deployment end-to-end (health, models, query, SSE stream, deep-report). It is env-gated: it refuses to run without `--live` or `ARGUS_SMOKE_LIVE=1`, because real runs spend provider tokens.
+
+```powershell
+# start the stack first, with real keys in .env
+docker compose up --build -d
+
+python scripts/smoke_live.py --live                                   # all checks
+python scripts/smoke_live.py --live --only health models              # subset
+python scripts/smoke_live.py --live --token <jwt>                     # auth-enabled deploy
+```
+
+Exit codes: `0` passed, `1` failures, `2` guard refused, `3` usage error.
+
 ## Current Scope
 
-This is a backend-only MVP. The bounded parallel `/v1/query` pipeline remains the fast default path; `POST /v1/report` adds the deep-report mode (planner -> parallel research tracks -> global verification -> writer -> bounded reviewer repair) returning Markdown asynchronously. Streaming (SSE), JWT auth, and metrics endpoints are the next milestones.
+This is a backend-only MVP. The bounded parallel `/v1/query` pipeline remains the fast default path; `POST /v1/report` adds the deep-report mode (planner -> parallel research tracks -> global verification -> writer -> bounded reviewer repair) returning Markdown asynchronously. Shipped alongside it: SSE streaming (`/v1/query/stream`), opt-in JWT auth, Redis caching/rate limiting, router strategies (`static`/`semantic`), and Prometheus metrics. Deferred Phase 2 items: multimodal inputs, OpenTelemetry tracing, OAuth2, web UI, Kubernetes manifests.
 
 ## Security
 
