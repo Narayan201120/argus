@@ -1,12 +1,28 @@
-from pydantic import BaseModel, Field
-from typing import Optional, Literal
 from datetime import UTC, datetime
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 
 class ConnectorConfigRequest(BaseModel):
     connectors: list[str] | None = Field(
         default=None,
         description="Connector IDs to activate. Omit to use every available connector.",
+    )
+    profile: str | None = Field(
+        default=None,
+        description=(
+            "Named routing profile from config/routing.yaml (e.g. 'research', "
+            "'code'). Ignored when connectors is set."
+        ),
+    )
+    role_bindings: dict[str, list[str]] | None = Field(
+        default=None,
+        description=(
+            "Per-request role-to-provider preference overrides. Keys: "
+            "researcher, analyzer, verifier, synthesizer. Values are ordered "
+            "connector IDs."
+        ),
     )
     timeout_s: int = Field(default=45, ge=5, le=120)
     max_tokens: int = Field(default=4096, ge=256, le=32000)
@@ -34,9 +50,9 @@ class ModelStatus(BaseModel):
     connector_id: str
     status: Literal["success", "timeout", "error", "skipped"]
     latency_ms: int
-    error: Optional[str] = None
-    token_usage: Optional[TokenUsageOut] = None
-    sub_query: Optional[str] = None
+    error: str | None = None
+    token_usage: TokenUsageOut | None = None
+    sub_query: str | None = None
 
 
 class QueryResponse(BaseModel):
@@ -48,6 +64,8 @@ class QueryResponse(BaseModel):
     latency_breakdown: dict[str, int]
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     short_circuited: bool = False
+    role_assignments: dict[str, str] = Field(default_factory=dict)
+    cache_hit: bool = False
 
 
 class ConnectorProfile(BaseModel):
@@ -71,4 +89,23 @@ class ConnectorHealthStatus(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok", "degraded", "unavailable"]
     connectors: list[ConnectorHealthStatus]
+    redis: Literal["ok", "unavailable", "disabled"] = "disabled"
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ReportCreateResponse(BaseModel):
+    job_id: str
+    status: Literal["queued", "running"] = "queued"
+    poll_url: str
+
+
+class ReportJobStatus(BaseModel):
+    job_id: str
+    query: str
+    status: Literal["queued", "running", "completed", "failed"]
+    progress: str
+    result_markdown: str | None = None
+    error: str | None = None
+    role_assignments: dict[str, str] = Field(default_factory=dict)
+    created_at: float
+    updated_at: float
