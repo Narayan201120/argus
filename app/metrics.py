@@ -67,6 +67,15 @@ ROUTER_DECISIONS = Counter(
     "Semantic routing decisions by deciding mechanism and matched profile.",
     ["method", "matched_profile"],
 )
+TRANSCRIPTIONS = Counter(
+    "argus_transcriptions_total",
+    "Audio transcription attempts by outcome.",
+    ["status"],
+)
+TRANSCRIPTION_LATENCY = Histogram(
+    "argus_transcription_latency_seconds",
+    "End-to-end transcription duration in seconds.",
+)
 
 
 def record_role_outcome(role: str, connector_id: str, status: str, latency_ms: int) -> None:

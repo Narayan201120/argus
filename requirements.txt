@@ -2,6 +2,7 @@
 # Upper caps = majors verified by the test suite; bump deliberately.
 fastapi>=0.115.0,<1
 uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9  # multipart/form-data (audio uploads)
 
 # Data validation
 pydantic>=2.7.0

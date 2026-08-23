@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.routes import audio as audio_router
 from app.api.routes import auth as auth_router
 from app.api.routes import health as health_router
 from app.api.routes import models as models_router
@@ -63,6 +64,7 @@ app.add_middleware(JWTAuthMiddleware)
 app.add_middleware(PrometheusMiddleware)
 
 app.include_router(auth_router.router, prefix="/v1", tags=["Auth"])
+app.include_router(audio_router.router, prefix="/v1", tags=["Audio"])
 app.include_router(query_router.router, prefix="/v1", tags=["Query"])
 app.include_router(stream_router.router, prefix="/v1", tags=["Query"])
 app.include_router(reports_router.router, prefix="/v1", tags=["Reports"])

@@ -104,6 +104,20 @@ class HealthResponse(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class TranscriptionResponse(BaseModel):
+    text: str
+    language_code: str | None = None
+    model: str
+    latency_ms: int
+
+
+class AudioQueryResponse(QueryResponse):
+    transcript_text: str
+    transcript_language_code: str | None = None
+    transcript_model: str
+    transcription_latency_ms: int
+
+
 class ReportCreateResponse(BaseModel):
     job_id: str
     status: Literal["queued", "running"] = "queued"

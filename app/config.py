@@ -33,6 +33,15 @@ class Settings(BaseSettings):
     # Deep-report pipeline
     report_max_repair_rounds: int = 1
 
+    # Audio transcription (Sarvam STT)
+    sarvam_api_key: str | None = None
+    sarvam_stt_model: str = "saaras:v3"
+    sarvam_stt_mode: str = "transcribe"
+    sarvam_stt_language: str = "unknown"
+    transcription_enabled: bool = True
+    transcription_timeout_s: int = 60
+    audio_max_upload_bytes: int = 10 * 1024 * 1024
+
     # Authentication (opt-in)
     auth_enabled: bool = False
     jwt_secret: str | None = None
