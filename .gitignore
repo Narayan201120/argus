@@ -44,8 +44,10 @@ htmlcov/
 *.env.docker
 
 # Local dev server logs
-uvicorn.out.log
-uvicorn.err.log
+uvicorn*.log
+
+# Local test audio (owner-provided samples, never committed)
+audio_samples/
 
 # Redis / local data
 dump.rdb

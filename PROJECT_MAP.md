@@ -1,223 +1,219 @@
 # ARGUS Project Map
 
-Last updated: August 22, 2026
+Last updated: August 23, 2026 (v0.3.0)
 
 ## Current Stage
 
-ARGUS is a backend-only Phase 1 MVP for multi-model orchestration using a
-bounded role-based parallel pipeline.
+ARGUS is a backend-only multi-model orchestration platform at **v0.3.0**.
+Phase 1 (bounded parallel pipeline) and Phase 2 (intelligence, voice,
+observability, release engineering) are complete and CI-guarded.
 
 What is implemented now:
-- FastAPI app with `POST /v1/query`, `GET /v1/health`, and `GET /v1/models`
-- Connector abstraction and registry; all four connectors (Gemini, OpenAI,
-  Claude, Mistral) registered at startup and gated by API key presence
-- Deterministic parallel plan builder (`build_parallel_plan`) with a frozen
-  shared task snapshot
-- Parallel role workers (`researcher` / `analyzer` / `verifier`) with
-  retry-on-timeout and real token usage propagation (`WorkerOutcome`)
-- Aggregator with role precedence, deterministic reconciliation summary, a
-  synthesizer fallback chain, and labeled-concat last resort
-- Short-query direct path that bypasses the pipeline
-- Tooling: ruff + mypy configured via `pyproject.toml`, both clean
+- FastAPI app: `POST /v1/query`, `POST /v1/query/stream` (SSE),
+  `POST /v1/transcribe`, `POST /v1/query/audio`, `POST /v1/report`,
+  `GET /v1/report/{id}`, `GET /v1/health`, `GET /v1/models`,
+  `GET /v1/metrics`, `POST /v1/auth/token`
+- Four connectors (Gemini, OpenAI, Claude, Mistral); model IDs
+  env-configurable (`GEMINI_MODEL` / `MISTRAL_MODEL`); provider 429s
+  surface as `rate_limited` with retry hints
+- Router strategies: `static` (YAML chains) and `semantic`
+  (embeddings-first via Gemini/OpenAI embeddings, keyword fallback,
+  failure cooldown); profiles live in `config/routing.yaml` with
+  per-profile `keywords:` and `description:`
+- Deep-report mode: planner -> bounded parallel tracks -> global
+  verifier -> writer -> reviewer repair loop, job store memory+Redis
+- Sarvam speech-to-text input (saaras:v3) with credit-safety guards
+- Redis response cache + rate limiting (subject-keyed when authed,
+  IP fallback); everything fails open without Redis
+- Opt-in JWT auth (client-credentials dev flow)
+- Prometheus metrics + provisioned Grafana dashboard
+  (`docker compose --profile observability up`) and opt-in OTel tracing
+- CI gate on every push/PR: ruff, mypy, compileall, mock-only pytest
 
-What is not implemented yet:
-- Redis-backed caching or rate limiting in business logic (Redis is
-  provisioned in Docker Compose but unused)
-- Streaming endpoint
-- Frontend
-- End-to-end validation with real provider keys
+Not implemented (Phase 3 backlog):
+- Conversation memory (Redis sessions)
+- Local model connector (Ollama/LM Studio)
+- Plugin SDK, A/B routing experiments
+- Web UI (mic button), Kubernetes Helm chart
 
 ## Top-Level Structure
 
-`app/`
-- Main application code
+`app/` - application code (see Code Map)
 
-`tests/`
-- Unit and API tests (pytest + pytest-asyncio, mock connectors)
+`tests/` - pytest suite, 139 tests, mock-only (no live provider calls;
+conftest forces embedding provider off in tests)
 
-`prompts/`
-- Role prompt templates consumed by orchestration logic
+`scripts/smoke_live.py` - env-gated live smoke checks against a running
+deployment (health/models/query/stream/report/audio)
 
-`README.md`
-- High-level project overview and setup
+`config/routing.yaml` - role preference chains + routing profiles
+(connectors, keywords, description per profile)
 
-`PROGRESS.md`
-- Handoff/progress log (kept current after each session)
+`prompts/` - role prompt templates
 
-`ARGUS_PRD_v1.md`
-- Original product requirements document (local only)
+`deploy/prometheus|grafana/` - observability stack configs + dashboard
+
+`.github/workflows/ci.yml` - CI gate workflow
+
+`README.md` - overview/setup | `PROJECT_MAP.md` - this map |
+`PROGRESS.md` - progress log (local only) |
+`DECISIONS.md` - decision log (local only) |
+`ARGUS_PRD_v1.md` - PRD with architecture appendix (local only)
 
 ## Runtime Flow
 
-Current request flow for `POST /v1/query`:
+`POST /v1/query`:
+1. Async resolver validates model_config (unknown roles/connectors/
+   strategies/profiles -> 422; nothing available -> 503) and applies the
+   router strategy: explicit connectors > profile > semantic inference
+   (embeddings -> keyword fallback) > full pool
+2. `_is_simple_query` short-circuits simple queries to one direct
+   provider call (with timeout-retry); cache consulted first when Redis
+   is up (`cache_hit: true` on repeats)
+3. Complex queries: `build_parallel_plan` freezes a `SharedTaskState`,
+   researcher/analyzer/verifier run concurrently, each result parsed into
+   typed contracts with real latency + token usage
+4. `synthesize` reconciles role outputs through a synthesizer fallback
+   chain into the final answer; successful responses cached
 
-1. API resolves requested vs available connectors (unknown IDs -> 422,
-   none available -> 503)
-2. `_is_simple_query` short-circuits short single-intent queries to one
-   direct provider call
-3. Otherwise `build_parallel_plan` produces an `OrchestrationPlan`
-   (`SharedTaskState` + per-role tasks)
-4. Researcher, analyzer, and verifier run concurrently via
-   `asyncio.gather(..., return_exceptions=True)` in the route
-5. `_build_status` converts each `WorkerOutcome` (or exception) into a
-   `ConnectorResponse` carrying real latency and token usage
-6. `synthesize` reconciles parsed role outputs plus a deterministic
-   reconciliation summary into the final answer
-7. Response includes per-role statuses, synthesizer ID, and latency
-   breakdown
+Other paths reuse the same resolver: `/v1/query/stream` emits SSE events
+per role plus streamed synthesis tokens and a terminal `final` envelope;
+`/v1/query/audio` transcribes via Sarvam then enters this pipeline;
+`/v1/report` fans subtasks out through planner/tracks/verifier/writer/
+reviewer asynchronously.
 
 ## Code Map
 
 ### Entry Point
 
 `app/main.py`
-- Creates the FastAPI app
-- Registers all four connectors during lifespan startup
-- Mounts API routers under `/v1`
+- FastAPI app, lifespan: tracing setup -> connector registration ->
+  Redis connect/close
+- Middleware stack (outermost first): Prometheus -> JWT auth -> rate limit
+- Routers under `/v1`: auth, audio, query, stream, reports, health,
+  models, metrics
 
 ### Configuration
 
-`app/config.py`
-- Loads `.env` values via `pydantic-settings`
-- Holds provider keys, Redis URL, connector defaults
+`app/config.py` - pydantic-settings: provider keys + model overrides,
+Redis/cache/rate-limit, report rounds, Sarvam STT, embedding router,
+JWT, tracing knobs
 
-`pyproject.toml`
-- Ruff lint config (app strict; tests exempt from line-length for JSON
-  fixtures), mypy config, pytest config
+`pyproject.toml` - ruff/mypy/pytest config; version = 0.3.0
 
 ### API Layer
 
-`app/api/schemas.py`
-- Pydantic request/response models (`model_config` alias handling)
+`app/api/schemas.py` - request/response models (incl. profile,
+role_bindings, router_strategy on ConnectorConfigRequest; QueryResponse
+carries role_assignments, cache_hit, router_strategy, matched_profile;
+AudioQueryResponse adds transcript fields)
 
-`app/api/routes/query.py`
-- Main orchestration endpoint
-- `ROLE_PREFERENCES` maps roles to provider preference chains
-- Builds active connector list, runs plan/workers/synthesis
+`app/api/routes/shared.py` - async `resolve_request_connectors` returning
+frozen `ResolvedRouting(active, overrides, router_strategy,
+matched_profile)`; single canonical 422/503 path for query/stream/report
 
-`app/api/routes/health.py`
-- Live connector availability checks
+`app/api/routes/query.py` - main orchestration endpoint + cache +
+direct-path retry + role/token metric recording via `_build_status`
 
-`app/api/routes/models.py`
-- Lists registered connectors and capabilities
+`app/api/routes/stream.py` - SSE variant (role_complete events, synthesis
+tokens, terminal final envelope)
 
-### Orchestration Layer
+`app/api/routes/reports.py` - deep-report create/poll
 
-`app/orchestration/contracts.py`
-- Typed Pydantic contracts: shared task state, per-role tasks and results,
-  aggregation input, orchestration plan
-- Field validators normalize whitespace and deduplicate lists
+`app/api/routes/audio.py` - transcribe + voice-query endpoints with
+credit-safety guards (extension allowlist, size cap, no STT retries)
 
-`app/orchestration/decomposer.py`
-- `_is_simple_query` heuristic (word count, question marks, newlines)
-- `build_parallel_plan` constructs the frozen snapshot and role tasks
+`app/api/routes/auth.py` - JWT issuance (dev client-credentials)
 
-`app/orchestration/workers.py`
-- `_query_with_retry`: one automatic retry on timeout
-- `_run_role_task`: prompt assembly from templates, JSON parsing into
-  typed results, returns `WorkerOutcome(result, response)`
-- Public entry points: `run_research_task`, `run_analysis_task`,
-  `run_verification_task`
+`app/auth.py` - JWT middleware; exempts /, docs, openapi.json, health,
+auth/token, metrics
 
-`app/orchestration/aggregator.py`
-- Parses role outputs into typed models
-- Deterministic reconciliation: unsupported assumptions, missing validation
-  coverage, constraint/risk conflicts, confidence scoring (token-overlap
-  heuristics - acceptable for MVP, not semantic ground truth)
-- Synthesis fallback chain then labeled concatenation
+### Orchestration
 
-Note: the former `dispatcher.py` and legacy LLM-based `decompose_query`
-path were removed on 2026-08-22; fan-out now lives in the query route and
-retry logic lives in `workers._query_with_retry`.
+`app/orchestration/contracts.py` - typed task/result/state contracts with
+normalizing validators
 
-`app/orchestration/binding.py`
-- `RoutingConfig`, YAML loader with default fallback, and
-  `RoleBindingService.select_connector`
-- Loads `config/routing.yaml` (roles + named profiles)
+`app/orchestration/decomposer.py` - short-query heuristic +
+`build_parallel_plan`
 
-`app/cache.py`
-- `ResponseCache`: sha256(query+model_config) keys, TTL, fail-open reads
+`app/orchestration/workers.py` - `_query_with_retry` (timeout retry),
+prompt assembly, JSON parsing, generic `WorkerOutcome[ResultT]`, public
+run_*_task helpers
 
-`app/ratelimit.py`
-- `RateLimitMiddleware`: fixed-window Redis counters per client IP,
-  429 + Retry-After, fails open without Redis
+`app/orchestration/aggregator.py` - reconciliation + `synthesize` /
+`synthesize_stream` fallback chains
 
-`app/rediskit.py`
-- Shared async Redis client holder, connect/close/ping helpers
+`app/orchestration/binding.py` - `RoutingConfig` (rich YAML profiles =
+ProfileDefinition{connectors, keywords, description}),
+`RoleBindingService` (chains/profiles/keyword inference), ROUTER_STRATEGIES,
+and `SemanticRouter` (embeddings-first classification, 60s cooldown,
+keyword fallback) exposed as module singleton
 
-`app/orchestration/report_contracts.py`
-- Deep-report models: `ReportPlan`, `ReportSubtask`, `TrackResult`,
-  `ReviewVerdict`, `VerificationSummary`
+`app/embeddings.py` - BaseEmbedder + OpenAI/Gemini backends + cosine +
+factory (auto prefers Gemini)
 
-`app/orchestration/report_planner.py`
-- LLM planner splitting a request into 2-5 subtasks; deterministic
-  single-subtask fallback on any planner/parse failure
+`app/orchestration/report_{contracts,planner,jobs,runner}.py` -
+deep-report contracts, LLM planner w/ fallback, memory+Redis job store,
+pipeline executor with terminal-state metrics
 
-`app/orchestration/report_jobs.py`
-- `ReportJobStore`: in-memory jobs mirrored to Redis (24h TTL), with
-  read-through restore and corrupt-payload protection
+### Connectors & Infrastructure
 
-`app/orchestration/report_runner.py`
-- Pipeline executor: bounded parallel tracks (semaphore 3) reusing role
-  workers, global verifier pass, writer, one-round reviewer repair loop,
-  labeled Markdown fallback
+`app/connectors/base.py` - BaseConnector ABC, statuses incl.
+RATE_LIMITED, `classify_provider_exception` (429/quota detection),
+ConnectorResponse.retry_after_s, default stream_query delegating to query
 
-`app/api/routes/reports.py`
-- `POST /v1/report` (202 + job id, fire-and-forget task) and
-  `GET /v1/report/{id}`; validates profiles/bindings/connectors like the
-  query route
+`app/connectors/{gemini,openai,mistral}.py` + claude.py - providers;
+SDK exceptions classified in handlers; model IDs from settings
 
-### Connector Layer
+`app/connectors/registry.py` - singleton registry; wraps instances with
+OTel spans at registration when tracing enabled
 
-`app/connectors/base.py`
-- `BaseConnector` ABC, `ConnectorStatus` StrEnum, response/config/usage
-  dataclasses
+`app/rediskit.py` - shared async Redis holder (fail-open everywhere)
 
-`app/connectors/registry.py`
-- Singleton registry populated at startup
+`app/cache.py` - ResponseCache (sha256 keys, TTL, max-bytes guard)
 
-`app/connectors/{gemini,openai,claude,mistral}.py`
-- Provider implementations; availability = API key present; real token
-  usage extracted where SDKs expose it
+`app/ratelimit.py` - fixed-window limiter; subject-keyed when
+authenticated, IP otherwise; health/metrics exempt
 
-### Utilities
+`app/metrics.py` - argus_* metric registry + PrometheusMiddleware
+(outermost; route-template labels resolved across starlette versions)
 
-`app/utils/logger.py`
-- JSON structured logging
+`app/tracing.py` - opt-in OTel configure_tracing() + span() context
+manager
+
+`app/transcription/` - BaseTranscriber, TranscriptionResult/Error,
+SarvamTranscriber (api-subscription-key header, saaras:v3), factory
 
 ## Tests
 
-Suite: 33 passing locally (`venv\Scripts\python.exe -m pytest -q`),
-ruff and mypy clean on `app/`.
+139 passing (`venv\Scripts\python.exe -m pytest -q`), verified in both
+the local venv and a fresh-resolution venv (CI parity). CI runs the same
+suite on ubuntu/py3.12 plus ruff, mypy (app+scripts), compileall.
 
-Coverage focus:
-- connector abstraction basics
-- simple-query heuristic and parallel plan builder
-- worker prompt building, JSON parsing, timeout-retry behavior
-- aggregator reconciliation and fallbacks
-- API routes: direct path, requested-provider isolation, registration
+Coverage highlights: connector classification (quota->rate_limited),
+router strategies (embedding match/threshold/fallback/cooldown via
+scripted embedders), audio guards and voice-query pipeline (stubbed
+transcriber), SSE event sequences, report lifecycle, auth flows, metric
+label stability across starlette majors.
 
-Gaps:
-- no real provider integration tests
-- no end-to-end tests with actual API keys
-
-## Current Architectural Constraints
-
-The system is a bounded parallel pipeline, not a dynamic multi-agent graph:
-- planning happens once (deterministically)
-- worker execution happens in parallel
-- synthesis happens once
+Gaps: no live-provider integration tests by design (DEC-008);
+`scripts/smoke_live.py --live` covers that manually.
 
 ## Known Drift / Risks
 
-1. Reconciliation heuristics are lexical (token overlap), not semantic.
-2. No live-provider validation has been performed (keys pending rotation).
-3. Named profile provider orderings in `config/routing.yaml` are starting
-   points, not benchmarked choices.
+1. Reconciliation heuristics are lexical, not semantic.
+2. Parallel-path ModelStatus collapses non-success worker outcomes to
+   `error` (worker raises); direct/stream paths preserve full status.
+3. Dependency caps in requirements.txt are tested majors - bump
+   deliberately (starlette 1.x lesson, DEC-043).
+4. `google.generativeai` is deprecated upstream; migration to
+   `google.genai` is an open candidate.
+5. Semantic embeddings call providers per semantic query (cooldown after
+   failures); Gemini free-tier quota applies.
 
 ## Roadmap Alignment
 
-See `PROGRESS.md`. Completed: Stage 0 (observability + dead code removal),
-Stage 1 (routing config + binding), Stage 2 (Redis cache + rate limiting),
-Stage 3 (deep-report mode). Next: SSE streaming, JWT auth, semantic
-router, metrics, release hardening.
+Phase 1 (Stages 0-8): COMPLETE. Phase 2 (P2-0..P2-4): COMPLETE at v0.3.0.
+Next up when scheduled (Phase 3 backlog): conversation memory, Ollama/LM
+Studio connector, plugin SDK, A/B routing experiments, web UI (mic
+button), Kubernetes Helm chart.
