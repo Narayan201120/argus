@@ -1,7 +1,7 @@
 import asyncio
 import time
-from typing import Optional
 
+from app.config import settings
 from app.connectors.base import (
     BaseConnector,
     ConnectorConfig,
@@ -9,7 +9,6 @@ from app.connectors.base import (
     ConnectorStatus,
     TokenUsage,
 )
-from app.config import settings
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -79,7 +78,7 @@ class GeminiConnector(BaseConnector):
                 sub_query=sub_query,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             latency_ms = int((time.monotonic() - start) * 1000)
             logger.warning({"message": "Gemini timeout", "latency_ms": latency_ms})
             return ConnectorResponse(

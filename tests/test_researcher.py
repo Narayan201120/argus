@@ -19,7 +19,7 @@ class ResearchConnector(BaseConnector):
                 '"unknowns":["u1"],"confidence":"high"}'
             ),
             latency_ms=10,
-            token_usage=TokenUsage(),
+            token_usage=TokenUsage(11, 7, 18),
             status=ConnectorStatus.SUCCESS,
             sub_query=sub_query,
         )
@@ -30,7 +30,7 @@ class ResearchConnector(BaseConnector):
 
 @pytest.mark.asyncio
 async def test_run_research_task_parses_json():
-    result = await run_research_task(
+    outcome = await run_research_task(
         connector=ResearchConnector(),
         shared_state=SharedTaskState(
             request_id="req-1",
@@ -46,5 +46,6 @@ async def test_run_research_task_parses_json():
         ),
         config=ConnectorConfig(),
     )
-    assert result.facts == ["f1"]
-    assert result.confidence == "high"
+    assert outcome.result.facts == ["f1"]
+    assert outcome.result.confidence == "high"
+    assert outcome.response.token_usage.total_tokens == 18

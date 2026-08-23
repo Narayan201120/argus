@@ -19,7 +19,7 @@ class VerificationConnector(BaseConnector):
                 '"edge_cases":["e1"],"validation_requirements":["v1"],"confidence":"high"}'
             ),
             latency_ms=10,
-            token_usage=TokenUsage(),
+            token_usage=TokenUsage(11, 7, 18),
             status=ConnectorStatus.SUCCESS,
             sub_query=sub_query,
         )
@@ -30,7 +30,7 @@ class VerificationConnector(BaseConnector):
 
 @pytest.mark.asyncio
 async def test_run_verification_task_parses_json():
-    result = await run_verification_task(
+    outcome = await run_verification_task(
         connector=VerificationConnector(),
         shared_state=SharedTaskState(
             request_id="req-1",
@@ -52,5 +52,6 @@ async def test_run_verification_task_parses_json():
         ),
         config=ConnectorConfig(),
     )
-    assert result.critical_risks == ["r1"]
-    assert result.confidence == "high"
+    assert outcome.result.critical_risks == ["r1"]
+    assert outcome.result.confidence == "high"
+    assert outcome.response.token_usage.total_tokens == 18

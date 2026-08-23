@@ -19,7 +19,7 @@ class AnalysisConnector(BaseConnector):
                 '"tradeoffs":["t1"],"risks":["r1"],"validation_checks":["v1"]}'
             ),
             latency_ms=10,
-            token_usage=TokenUsage(),
+            token_usage=TokenUsage(11, 7, 18),
             status=ConnectorStatus.SUCCESS,
             sub_query=sub_query,
         )
@@ -30,7 +30,7 @@ class AnalysisConnector(BaseConnector):
 
 @pytest.mark.asyncio
 async def test_run_analysis_task_parses_json():
-    result = await run_analysis_task(
+    outcome = await run_analysis_task(
         connector=AnalysisConnector(),
         shared_state=SharedTaskState(
             request_id="req-1",
@@ -46,5 +46,6 @@ async def test_run_analysis_task_parses_json():
         ),
         config=ConnectorConfig(),
     )
-    assert result.proposed_solution == "Do X"
-    assert result.validation_checks == ["v1"]
+    assert outcome.result.proposed_solution == "Do X"
+    assert outcome.result.validation_checks == ["v1"]
+    assert outcome.response.token_usage.total_tokens == 18

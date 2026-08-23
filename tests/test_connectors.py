@@ -1,6 +1,8 @@
 import pytest
-from app.connectors.base import ConnectorResponse, ConnectorStatus, TokenUsage, ConnectorConfig
+
+from app.connectors.base import ConnectorConfig, ConnectorResponse, ConnectorStatus
 from app.connectors.registry import ConnectorRegistry
+
 
 @pytest.mark.asyncio
 async def test_connector_response_shape(mock_connector):

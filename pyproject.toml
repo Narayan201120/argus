@@ -1,0 +1,36 @@
+[project]
+name = "argus"
+version = "0.1.0"
+description = "ARGUS - multi-model research and answer orchestration backend"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+exclude = ["venv", ".pytest_cache", "__pycache__"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Long single-line JSON payload literals are intentional in tests.
+"tests/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+exclude = ["venv", ".pytest_cache"]
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+no_implicit_optional = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

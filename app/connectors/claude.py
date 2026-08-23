@@ -1,6 +1,7 @@
 import asyncio
 import time
 
+from app.config import settings
 from app.connectors.base import (
     BaseConnector,
     ConnectorConfig,
@@ -8,7 +9,6 @@ from app.connectors.base import (
     ConnectorStatus,
     TokenUsage,
 )
-from app.config import settings
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -46,6 +46,7 @@ class ClaudeConnector(BaseConnector):
 
         try:
             import anthropic
+            from anthropic.types import TextBlock
 
             client = anthropic.AsyncAnthropic(api_key=self.api_key)
 
@@ -72,7 +73,9 @@ class ClaudeConnector(BaseConnector):
             )
 
             latency_ms = int((time.monotonic() - start) * 1000)
-            content = response.content[0].text if response.content else ""
+            content = "".join(
+                block.text for block in response.content if isinstance(block, TextBlock)
+            )
 
             usage = TokenUsage(
                 prompt_tokens=response.usage.input_tokens,
@@ -89,7 +92,7 @@ class ClaudeConnector(BaseConnector):
                 sub_query=sub_query,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             latency_ms = int((time.monotonic() - start) * 1000)
             logger.warning({"message": "Claude timeout", "latency_ms": latency_ms})
             return ConnectorResponse(

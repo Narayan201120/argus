@@ -2,7 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-
 ConfidenceLevel = Literal["low", "medium", "high"]
 
 
@@ -112,7 +111,13 @@ class VerificationResult(BaseModel):
     validation_requirements: list[str] = Field(default_factory=list)
     confidence: ConfidenceLevel = "medium"
 
-    @field_validator("critical_risks", "hidden_assumptions", "edge_cases", "validation_requirements", mode="before")
+    @field_validator(
+        "critical_risks",
+        "hidden_assumptions",
+        "edge_cases",
+        "validation_requirements",
+        mode="before",
+    )
     @classmethod
     def _normalize_verification_lists(cls, value: list[str]) -> list[str]:
         return _clean_text_list(value or [])

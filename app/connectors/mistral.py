@@ -1,9 +1,13 @@
 import asyncio
 import time
-from app.connectors.base import (
-    BaseConnector, ConnectorConfig, ConnectorResponse, ConnectorStatus, TokenUsage,
-)
+
 from app.config import settings
+from app.connectors.base import (
+    BaseConnector,
+    ConnectorResponse,
+    ConnectorStatus,
+    TokenUsage,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -34,30 +38,36 @@ class MistralConnector(BaseConnector):
             )
 
         try:
-            from mistralai import Mistral
+            from mistralai import (
+                AssistantMessage,
+                Mistral,
+                SystemMessage,
+                ToolMessage,
+                UserMessage,
+            )
 
             client = Mistral(api_key=self.api_key)
 
+            messages: list[AssistantMessage | SystemMessage | ToolMessage | UserMessage] = [
+                SystemMessage(
+                    content=(
+                        "You are a specialized AI assistant. "
+                        "Answer only the specific task given to you. "
+                        "The original user query is provided for context only."
+                    ),
+                ),
+                UserMessage(
+                    content=(
+                        f"Original user query (context): {prompt}\n\n"
+                        f"Your specific task: {sub_query}"
+                    ),
+                ),
+            ]
+
             response = await asyncio.wait_for(
-                    client.chat.complete_async(
+                client.chat.complete_async(
                     model=model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are a specialized AI assistant. "
-                                "Answer only the specific task given to you. "
-                                "The original user query is provided for context only."
-                            ),
-                        },
-                        {
-                            "role": "user",
-                            "content": (
-                                f"Original user query (context): {prompt}\n\n"
-                                f"Your specific task: {sub_query}"
-                            ),
-                        },
-                    ],
+                    messages=messages,
                     max_tokens=config.max_tokens,
                     temperature=config.temperature,
                 ),
@@ -65,12 +75,18 @@ class MistralConnector(BaseConnector):
             )
 
             latency_ms = int((time.monotonic() - start) * 1000)
-            content = response.choices[0].message.content or ""
+            raw_content = (
+                response.choices[0].message.content
+                if response is not None and response.choices
+                else None
+            )
+            content = raw_content if isinstance(raw_content, str) else ""
 
+            usage_data = response.usage if response is not None else None
             usage = TokenUsage(
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
-                total_tokens=response.usage.total_tokens,
+                prompt_tokens=usage_data.prompt_tokens or 0 if usage_data else 0,
+                completion_tokens=usage_data.completion_tokens or 0 if usage_data else 0,
+                total_tokens=usage_data.total_tokens or 0 if usage_data else 0,
             )
 
             return ConnectorResponse(
@@ -82,7 +98,7 @@ class MistralConnector(BaseConnector):
                 sub_query=sub_query,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             latency_ms = int((time.monotonic() - start) * 1000)
             logger.warning({"message": "Mistral timeout", "latency_ms": latency_ms})
             return ConnectorResponse(

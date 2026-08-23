@@ -1,10 +1,16 @@
 import json
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Type
+from typing import Generic, TypeVar
 
 from pydantic import BaseModel
 
-from app.connectors.base import BaseConnector, ConnectorConfig, ConnectorStatus
+from app.connectors.base import (
+    BaseConnector,
+    ConnectorConfig,
+    ConnectorResponse,
+    ConnectorStatus,
+)
 from app.orchestration.contracts import (
     AnalysisResult,
     AnalysisTask,
@@ -61,10 +67,10 @@ Return only valid JSON with keys:
 """,
 }
 
-DEFAULT_CONFIG = {
-    "researcher": {"max_tokens": 1200, "temperature": 0.2},
-    "analyzer": {"max_tokens": 1600, "temperature": 0.2},
-    "verifier": {"max_tokens": 1200, "temperature": 0.2},
+DEFAULT_CONFIG: dict[str, ConnectorConfig] = {
+    "researcher": ConnectorConfig(max_tokens=1200, temperature=0.2),
+    "analyzer": ConnectorConfig(max_tokens=1600, temperature=0.2),
+    "verifier": ConnectorConfig(max_tokens=1200, temperature=0.2),
 }
 
 
@@ -89,7 +95,47 @@ def _build_role_sub_query(shared_state: SharedTaskState, task: BaseModel, role: 
     )
 
 
-def _parse_role_result(raw: str, result_model: Type[BaseModel]) -> BaseModel:
+ResultT = TypeVar("ResultT", bound=BaseModel)
+
+
+@dataclass
+class WorkerOutcome(Generic[ResultT]):
+    """Parsed role result plus the underlying connector response.
+
+    Exposes the connector's real token usage and per-call latency so the
+    API layer can report them instead of stub values.
+    """
+
+    result: ResultT
+    response: ConnectorResponse
+
+
+async def _query_with_retry(
+    connector: BaseConnector,
+    prompt: str,
+    sub_query: str,
+    config: ConnectorConfig,
+) -> ConnectorResponse:
+    """Run a connector query with one automatic retry on timeout."""
+    response = await connector.query(prompt, sub_query, config)
+
+    if response.status == ConnectorStatus.TIMEOUT and config.max_retries > 0:
+        logger.info({
+            "message": "Retrying connector after timeout",
+            "connector_id": connector.connector_id,
+        })
+        retry_config = ConnectorConfig(
+            timeout_s=config.timeout_s,
+            max_retries=0,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+        )
+        response = await connector.query(prompt, sub_query, retry_config)
+
+    return response
+
+
+def _parse_role_result(raw: str, result_model: type[ResultT]) -> ResultT:
     raw = raw.strip()
     if raw.startswith("```"):
         parts = raw.split("```")
@@ -104,13 +150,14 @@ async def _run_role_task(
     shared_state: SharedTaskState,
     task: BaseModel,
     role: str,
-    result_model: Type[BaseModel],
+    result_model: type[ResultT],
     config: ConnectorConfig | None = None,
-) -> BaseModel:
+) -> WorkerOutcome[ResultT]:
     if config is None:
-        config = ConnectorConfig(**DEFAULT_CONFIG[role])
+        config = replace(DEFAULT_CONFIG[role])
 
-    response = await connector.query(
+    response = await _query_with_retry(
+        connector=connector,
         prompt=shared_state.original_query,
         sub_query=_build_role_sub_query(shared_state, task, role),
         config=config,
@@ -119,7 +166,8 @@ async def _run_role_task(
     if response.status != ConnectorStatus.SUCCESS or not response.content:
         raise ValueError(f"{role.capitalize()} task failed: {response.error or response.status.value}")
 
-    return _parse_role_result(response.content, result_model)
+    result = _parse_role_result(response.content, result_model)
+    return WorkerOutcome(result=result, response=response)
 
 
 async def run_research_task(
@@ -127,7 +175,7 @@ async def run_research_task(
     shared_state: SharedTaskState,
     task: ResearchTask,
     config: ConnectorConfig | None = None,
-) -> ResearchResult:
+) -> WorkerOutcome[ResearchResult]:
     return await _run_role_task(
         connector=connector,
         shared_state=shared_state,
@@ -143,7 +191,7 @@ async def run_analysis_task(
     shared_state: SharedTaskState,
     task: AnalysisTask,
     config: ConnectorConfig | None = None,
-) -> AnalysisResult:
+) -> WorkerOutcome[AnalysisResult]:
     return await _run_role_task(
         connector=connector,
         shared_state=shared_state,
@@ -159,7 +207,7 @@ async def run_verification_task(
     shared_state: SharedTaskState,
     task: VerificationTask,
     config: ConnectorConfig | None = None,
-) -> VerificationResult:
+) -> WorkerOutcome[VerificationResult]:
     return await _run_role_task(
         connector=connector,
         shared_state=shared_state,

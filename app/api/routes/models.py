@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.schemas import ModelsResponse, ConnectorProfile
+from app.api.schemas import ConnectorProfile, ModelsResponse
 from app.connectors.registry import registry
 
 router = APIRouter()

@@ -1,11 +1,7 @@
 import pytest
-from app.connectors.base import (
-    BaseConnector,
-    ConnectorConfig,
-    ConnectorResponse,
-    ConnectorStatus,
-    TokenUsage
-)
+
+from app.connectors.base import BaseConnector, ConnectorResponse, ConnectorStatus, TokenUsage
+
 
 class MockConnector(BaseConnector):
     connector_id = "mock"
