@@ -1,0 +1,25 @@
+# ARGUS routing configuration.
+#
+# Edit this file to change role-to-provider preferences or add named
+# profiles without touching application code. Restart the API after edits.
+
+# Ordered provider preference chains per role. First available provider
+# in the chain wins; unknown IDs are skipped at selection time.
+roles:
+  researcher: [gemini, openai, claude, mistral]
+  analyzer: [openai, mistral, claude, gemini]
+  verifier: [claude, mistral, openai, gemini]
+  synthesizer: [claude, openai, gemini, mistral]
+  direct: [claude, openai, gemini, mistral]
+  planner: [openai, claude, gemini, mistral]
+  writer: [claude, openai, gemini, mistral]
+  reviewer: [claude, openai, mistral, gemini]
+
+# Named profiles restrict which providers are active for a request when
+# the caller sets model_config.profile. Explicit model_config.connectors
+# always wins over a profile.
+profiles:
+  research: [gemini, claude, mistral, openai]
+  code: [openai, claude, mistral, gemini]
+  analysis: [claude, openai, mistral, gemini]
+  fast: [mistral, gemini]
