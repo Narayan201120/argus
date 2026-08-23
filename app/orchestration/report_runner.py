@@ -13,6 +13,7 @@ from pathlib import Path
 
 from app.config import settings
 from app.connectors.base import BaseConnector, ConnectorConfig, ConnectorStatus
+from app.metrics import REPORT_JOBS
 from app.orchestration.binding import binding_service
 from app.orchestration.contracts import (
     AnalysisTask,
@@ -90,6 +91,7 @@ async def execute_report(
             "job_id": job_id,
             "error": str(exc),
         })
+        REPORT_JOBS.labels(status="failed").inc()
         await report_job_store.update(job_id, status="failed", error=str(exc))
 
 
@@ -162,6 +164,7 @@ async def _execute(
     if not markdown:
         markdown = _fallback_markdown(query, tracks, verification, issues)
 
+    REPORT_JOBS.labels(status="completed").inc()
     await report_job_store.update(
         job_id,
         status="completed",

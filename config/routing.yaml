@@ -18,8 +18,22 @@ roles:
 # Named profiles restrict which providers are active for a request when
 # the caller sets model_config.profile. Explicit model_config.connectors
 # always wins over a profile.
+#
+# Two accepted forms per profile:
+#   list form:            profile: [connector, ...]
+#   rich form (below):    connectors + optional keywords used by the
+#                         'semantic' router's keyword classifier. The
+#                         keywords here override the built-in defaults.
 profiles:
-  research: [gemini, claude, mistral, openai]
-  code: [openai, claude, mistral, gemini]
-  analysis: [claude, openai, mistral, gemini]
-  fast: [mistral, gemini]
+  research:
+    connectors: [gemini, claude, mistral, openai]
+    keywords: [research, literature, survey, sources, evidence, state of the art, papers, history of, compare]
+  code:
+    connectors: [openai, claude, mistral, gemini]
+    keywords: [code, bug, stack trace, refactor, compile, regex, python, typescript, sql, docker, function, api endpoint]
+  analysis:
+    connectors: [claude, openai, mistral, gemini]
+    keywords: [analyze, tradeoff, trade-offs, risk, strategy, evaluate, pros and cons, decision, benchmark, optimize, architecture]
+  fast:
+    connectors: [mistral, gemini]
+    keywords: [quick, briefly, short answer, tl;dr, one-liner]

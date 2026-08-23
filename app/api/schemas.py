@@ -56,11 +56,12 @@ class TokenUsageOut(BaseModel):
 class ModelStatus(BaseModel):
     role: Literal["researcher", "analyzer", "verifier", "direct"]
     connector_id: str
-    status: Literal["success", "timeout", "error", "skipped"]
+    status: Literal["success", "timeout", "error", "rate_limited", "skipped"]
     latency_ms: int
     error: str | None = None
     token_usage: TokenUsageOut | None = None
     sub_query: str | None = None
+    retry_after_s: float | None = None
 
 
 class QueryResponse(BaseModel):

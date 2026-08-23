@@ -164,7 +164,11 @@ async def _run_role_task(
     )
 
     if response.status != ConnectorStatus.SUCCESS or not response.content:
-        raise ValueError(f"{role.capitalize()} task failed: {response.error or response.status.value}")
+        detail = response.error or response.status.value
+        if response.status == ConnectorStatus.RATE_LIMITED:
+            wait = f"retry_after_s={response.retry_after_s}" if response.retry_after_s else "no retry hint"
+            detail = f"provider rate limited ({wait}): {detail}"
+        raise ValueError(f"{role.capitalize()} task failed: {detail}")
 
     result = _parse_role_result(response.content, result_model)
     return WorkerOutcome(result=result, response=response)

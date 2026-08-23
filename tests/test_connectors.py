@@ -1,6 +1,12 @@
 import pytest
 
-from app.connectors.base import ConnectorConfig, ConnectorResponse, ConnectorStatus
+from app.connectors.base import (
+    ConnectorConfig,
+    ConnectorResponse,
+    ConnectorStatus,
+    classify_provider_exception,
+)
+from app.connectors.gemini import GeminiConnector
 from app.connectors.registry import ConnectorRegistry
 
 
@@ -32,3 +38,68 @@ async def test_error_connector(failing_connector):
     assert response.status == ConnectorStatus.ERROR
     assert response.error is not None
     assert response.content == ""
+
+
+def test_classify_detects_429_status_code():
+    exc = TypeError("blocked")
+    exc.status_code = 429  # type: ignore[attr-defined]
+    status, _ = classify_provider_exception(exc)
+    assert status == ConnectorStatus.RATE_LIMITED
+
+
+def test_classify_detects_rate_limit_error_type():
+    class OpenAIRateLimitError(Exception):
+        pass
+
+    status, _ = classify_provider_exception(OpenAIRateLimitError("Too many requests"))
+    assert status == ConnectorStatus.RATE_LIMITED
+
+
+def test_classify_detects_quota_message_and_parses_nothing():
+    status, retry_after_s = classify_provider_exception(
+        Exception("429 You exceeded your current quota ... GenerateRequestsPerMinutePerProjectPerModel")
+    )
+    assert status == ConnectorStatus.RATE_LIMITED
+    assert retry_after_s is None
+
+
+def test_classify_extracts_retry_after_header():
+    from types import SimpleNamespace
+
+    exc = Exception("slow down")
+    exc.response = SimpleNamespace(headers={"retry-after": "12"})  # type: ignore[attr-defined]
+    exc.status_code = 429  # type: ignore[attr-defined]
+    status, retry_after_s = classify_provider_exception(exc)
+    assert status == ConnectorStatus.RATE_LIMITED
+    assert retry_after_s == 12.0
+
+
+def test_classify_plain_error_stays_error():
+    status, retry_after_s = classify_provider_exception(ValueError("bad json"))
+    assert status == ConnectorStatus.ERROR
+    assert retry_after_s is None
+
+
+@pytest.mark.asyncio
+async def test_gemini_maps_quota_error_to_rate_limited(monkeypatch):
+    connector = GeminiConnector()
+    connector.api_key = "test-key"
+    connector.is_available = True
+
+    import google.generativeai as genai
+
+    quota_error = Exception("429 Resource has been exhausted (quota exceeded).")
+
+    class FakeModel:
+        def __init__(self, model):
+            self.model = model
+
+        def generate_content(self, prompt):
+            raise quota_error
+
+    monkeypatch.setattr(genai, "configure", lambda **kwargs: None)
+    monkeypatch.setattr(genai, "GenerativeModel", FakeModel)
+
+    response = await connector.query("prompt", "sub", ConnectorConfig())
+    assert response.status == ConnectorStatus.RATE_LIMITED
+    assert "quota" in (response.error or "")

@@ -21,6 +21,7 @@ from app.orchestration.binding import binding_service
 from app.orchestration.decomposer import _is_simple_query, build_parallel_plan
 from app.orchestration.workers import (
     WorkerOutcome,
+    _query_with_retry,
     run_analysis_task,
     run_research_task,
     run_verification_task,
@@ -149,7 +150,8 @@ async def run_query(request: QueryRequest) -> QueryResponse:
             active_connectors, "direct", overrides=role_binding_overrides,
         )
         role_assignments["direct"] = direct_connector.connector_id
-        direct_response = await direct_connector.query(
+        direct_response = await _query_with_retry(
+            direct_connector,
             prompt="You are the direct response layer of an AI orchestration system.",
             sub_query=request.query,
             config=connector_config,
@@ -176,6 +178,7 @@ async def run_query(request: QueryRequest) -> QueryResponse:
                     error=direct_response.error,
                     token_usage=_token_usage_out(direct_response.token_usage),
                     sub_query=request.query,
+                    retry_after_s=direct_response.retry_after_s,
                 )
             ],
             latency_breakdown={"decompose_ms": decompose_ms, "total_ms": total_ms},
@@ -274,6 +277,7 @@ async def run_query(request: QueryRequest) -> QueryResponse:
             error=response_bundle[role].error,
             token_usage=_token_usage_out(response_bundle[role].token_usage),
             sub_query=response_bundle[role].sub_query,
+            retry_after_s=response_bundle[role].retry_after_s,
         )
         for role in ROLE_ORDER
     ]

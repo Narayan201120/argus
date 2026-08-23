@@ -8,6 +8,7 @@ from app.connectors.base import (
     ConnectorResponse,
     ConnectorStatus,
     TokenUsage,
+    classify_provider_exception,
 )
 from app.utils.logger import get_logger
 
@@ -93,15 +94,17 @@ class GeminiConnector(BaseConnector):
 
         except Exception as e:
             latency_ms = int((time.monotonic() - start) * 1000)
-            logger.error({"message": "Gemini error", "error": str(e)})
+            status, retry_after_s = classify_provider_exception(e)
+            logger.error({"message": "Gemini error", "error": str(e), "status": status.value})
             return ConnectorResponse(
                 model_id=model,
                 content="",
                 latency_ms=latency_ms,
                 token_usage=TokenUsage(),
-                status=ConnectorStatus.ERROR,
+                status=status,
                 error=str(e),
                 sub_query=sub_query,
+                retry_after_s=retry_after_s,
             )
 
     async def health_check(self) -> bool:

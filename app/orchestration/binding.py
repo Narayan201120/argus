@@ -30,13 +30,6 @@ DEFAULT_ROLES: dict[str, list[str]] = {
     "reviewer": ["claude", "openai", "mistral", "gemini"],
 }
 
-DEFAULT_PROFILES: dict[str, list[str]] = {
-    "research": ["gemini", "claude", "mistral", "openai"],
-    "code": ["openai", "claude", "mistral", "gemini"],
-    "analysis": ["claude", "openai", "mistral", "gemini"],
-    "fast": ["mistral", "gemini"],
-}
-
 # Router strategies selectable via settings.router_strategy or a
 # per-request model_config.router_strategy override. 'static' preserves
 # the exact pre-Stage-6 behavior; 'semantic' infers a named profile from
@@ -46,9 +39,9 @@ ROUTER_STRATEGIES: dict[str, str] = {
     "semantic": "Keyword intent classifier picks a named profile per query.",
 }
 
-# Intent lexicon for the semantic router. Keys must name profiles that
-# exist in RoutingConfig.profiles; unknown names are ignored at inference
-# time so removing a profile in YAML also removes it from semantic reach.
+# Intent lexicon fallback for built-in profiles. Profiles may override it
+# per-profile via routing.yaml (`keywords:`); custom profiles without a
+# lexicon entry are never inferred by the keyword classifier.
 PROFILE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "research": (
         "research", "literature", "survey", "sources", "evidence",
@@ -66,15 +59,39 @@ PROFILE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "fast": ("quick", "briefly", "short answer", "tl;dr", "one-liner"),
 }
 
+_DEFAULT_PROFILE_CONNECTORS: dict[str, list[str]] = {
+    "research": ["gemini", "claude", "mistral", "openai"],
+    "code": ["openai", "claude", "mistral", "gemini"],
+    "analysis": ["claude", "openai", "mistral", "gemini"],
+    "fast": ["mistral", "gemini"],
+}
+
+
+@dataclass(frozen=True)
+class ProfileDefinition:
+    """A named routing profile: provider pool plus optional intent hints."""
+
+    connectors: tuple[str, ...]
+    keywords: tuple[str, ...] = ()
+    description: str = ""
+
+
+def _default_profiles() -> dict[str, ProfileDefinition]:
+    return {
+        name: ProfileDefinition(
+            connectors=tuple(connectors),
+            keywords=PROFILE_KEYWORDS.get(name, ()),
+        )
+        for name, connectors in _DEFAULT_PROFILE_CONNECTORS.items()
+    }
+
 
 @dataclass(frozen=True)
 class RoutingConfig:
     roles: dict[str, list[str]] = field(
         default_factory=lambda: {k: list(v) for k, v in DEFAULT_ROLES.items()}
     )
-    profiles: dict[str, list[str]] = field(
-        default_factory=lambda: {k: list(v) for k, v in DEFAULT_PROFILES.items()}
-    )
+    profiles: dict[str, ProfileDefinition] = field(default_factory=_default_profiles)
 
 
 def load_routing_config(path: str | Path) -> RoutingConfig:
@@ -94,15 +111,25 @@ def load_routing_config(path: str | Path) -> RoutingConfig:
         for role, chain in (raw.get("roles") or {}).items()
         if isinstance(chain, list)
     }
-    profiles = {
-        profile: [str(connector_id) for connector_id in connectors]
-        for profile, connectors in (raw.get("profiles") or {}).items()
-        if isinstance(connectors, list)
-    }
+
+    profiles: dict[str, ProfileDefinition] = {}
+    for name, entry in (raw.get("profiles") or {}).items():
+        # List form:  profile: [connector, ...]
+        # Rich form:  profile: {connectors: [...], keywords: [...]}
+        if isinstance(entry, list):
+            profiles[str(name)] = ProfileDefinition(connectors=tuple(str(c) for c in entry))
+        elif isinstance(entry, dict) and isinstance(entry.get("connectors"), list):
+            keywords = entry.get("keywords")
+            profiles[str(name)] = ProfileDefinition(
+                connectors=tuple(str(c) for c in entry["connectors"]),
+                keywords=(
+                    tuple(str(k) for k in keywords) if isinstance(keywords, list) else ()
+                ),
+            )
 
     merged_roles = {k: list(v) for k, v in DEFAULT_ROLES.items()}
     merged_roles.update(roles)
-    merged_profiles = {k: list(v) for k, v in DEFAULT_PROFILES.items()}
+    merged_profiles = _default_profiles()
     merged_profiles.update(profiles)
 
     return RoutingConfig(roles=merged_roles, profiles=merged_profiles)
@@ -147,17 +174,18 @@ class RoleBindingService:
         normalized = query.lower()
         best_profile: str | None = None
         best_score = 0
-        for profile, keywords in PROFILE_KEYWORDS.items():
-            if profile not in self._config.profiles:
-                continue
-            score = sum(1 for keyword in keywords if keyword in normalized)
+        for profile_name, definition in self._config.profiles.items():
+            # Per-profile YAML lexicon wins; built-in fallback otherwise.
+            lexicon = definition.keywords or PROFILE_KEYWORDS.get(profile_name, ())
+            score = sum(1 for keyword in lexicon if keyword in normalized)
             if score > best_score:
-                best_profile = profile
+                best_profile = profile_name
                 best_score = score
         return best_profile
 
     def profile_connectors(self, profile: str) -> list[str]:
-        return list(self._config.profiles.get(profile, []))
+        definition = self._config.profiles.get(profile)
+        return list(definition.connectors) if definition else []
 
     def select_connector(
         self,

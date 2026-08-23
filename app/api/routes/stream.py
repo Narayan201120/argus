@@ -25,6 +25,7 @@ from app.orchestration.aggregator import synthesize_stream
 from app.orchestration.binding import binding_service
 from app.orchestration.decomposer import _is_simple_query, build_parallel_plan
 from app.orchestration.workers import (
+    _query_with_retry,
     run_analysis_task,
     run_research_task,
     run_verification_task,
@@ -74,6 +75,7 @@ def _model_status(role: StreamRole, response: ConnectorResponse) -> ModelStatus:
         error=response.error,
         token_usage=_token_usage_out(response.token_usage),
         sub_query=response.sub_query,
+        retry_after_s=response.retry_after_s,
     )
 
 
@@ -215,7 +217,8 @@ async def stream_query(request: QueryRequest) -> StreamingResponse:
         direct = binding_service.select_connector(
             active_connectors, "direct", overrides=overrides,
         )
-        response = await direct.query(
+        response = await _query_with_retry(
+            direct,
             prompt="You are the direct response layer of an AI orchestration system.",
             sub_query=request.query,
             config=connector_config,

@@ -52,10 +52,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 def key_for(request: Request) -> str:
-    client_ip = request.client.host if request.client else "unknown"
+    # Authenticated requests get a per-subject bucket so users behind a
+    # shared IP are not lumped together; anonymous requests fall back to IP.
+    subject = getattr(request.state, "subject", None)
+    identity = f"sub:{subject}" if subject else f"ip:{request.client.host if request.client else 'unknown'}"
     window = max(settings.rate_limit_window_s, 1)
     window_start = int(time.time()) // window * window
-    return f"argus:rl:{client_ip}:{window_start}"
+    return f"argus:rl:{identity}:{window_start}"
 
 
 def retry_seconds() -> int:

@@ -8,6 +8,7 @@ class ConnectorStatus(StrEnum):
     SUCCESS = "success"
     TIMEOUT = "timeout"
     ERROR = "error"
+    RATE_LIMITED = "rate_limited"
 
 
 @dataclass
@@ -26,6 +27,40 @@ class ConnectorResponse:
     status: ConnectorStatus
     error: str | None = None
     sub_query: str | None = None  # The sub-query this connector was assigned
+    retry_after_s: float | None = None  # Provider-advised wait, when it rate-limits us
+
+
+def classify_provider_exception(exc: Exception) -> tuple[ConnectorStatus, float | None]:
+    """Map a provider SDK exception to a connector status.
+
+    Rate-limit replies (HTTP 429 / quota messages / *RateLimitError types)
+    become RATE_LIMITED instead of generic ERROR so callers can back off
+    instead of surfacing them as failures. Returns (status, retry_after_s).
+    """
+    retry_after_s: float | None = None
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is not None and hasattr(headers, "get"):
+        raw = headers.get("retry-after")
+        if raw is not None:
+            try:
+                retry_after_s = max(float(raw), 0.0)
+            except (TypeError, ValueError):
+                retry_after_s = None
+
+    status_code = getattr(exc, "status_code", None)
+    exc_name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    is_rate_limited = (
+        status_code == 429
+        or "ratelimit" in exc_name.replace("_", "")
+        or "rate limit" in text
+        or "quota" in text
+        or "resource_exhausted" in text
+    )
+    if is_rate_limited:
+        return ConnectorStatus.RATE_LIMITED, retry_after_s
+    return ConnectorStatus.ERROR, retry_after_s
 
 
 @dataclass

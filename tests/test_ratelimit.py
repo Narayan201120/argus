@@ -64,3 +64,25 @@ def test_fail_open_without_redis(monkeypatch):
     client = TestClient(RateLimitMiddleware(_app(), holder))
     for _ in range(5):
         assert client.get("/ping").status_code == 200
+
+
+def test_subject_keyed_buckets_separate_from_ip(fake_redis, monkeypatch):
+    from starlette.requests import Request
+
+    from app.ratelimit import key_for
+
+    monkeypatch.setattr(holder, "client", fake_redis)
+
+    request = Request({"type": "http", "client": ("203.0.113.9", 1234)})
+    ip_key = key_for(request)
+
+    request.state.subject = "alice"
+    alice_key = key_for(request)
+
+    request.state.subject = "bob"
+    bob_key = key_for(request)
+
+    assert ip_key.startswith("argus:rl:ip:203.0.113.9:")
+    assert alice_key.startswith("argus:rl:sub:alice:")
+    assert bob_key.startswith("argus:rl:sub:bob:")
+    assert len({ip_key, alice_key, bob_key}) == 3

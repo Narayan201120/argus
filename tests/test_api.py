@@ -94,6 +94,7 @@ def test_short_query_uses_requested_connector(monkeypatch):
         "error": None,
         "token_usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         "sub_query": "What is ARGUS?",
+        "retry_after_s": None,
     }]
 
 
