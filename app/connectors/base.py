@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Literal, Optional
-from enum import Enum
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from enum import StrEnum
 
 
-class ConnectorStatus(str, Enum):
+class ConnectorStatus(StrEnum):
     SUCCESS = "success"
     TIMEOUT = "timeout"
     ERROR = "error"
@@ -24,8 +24,8 @@ class ConnectorResponse:
     latency_ms: int
     token_usage: TokenUsage
     status: ConnectorStatus
-    error: Optional[str] = None
-    sub_query: Optional[str] = None  # The sub-query this connector was assigned
+    error: str | None = None
+    sub_query: str | None = None  # The sub-query this connector was assigned
 
 
 @dataclass
@@ -34,7 +34,7 @@ class ConnectorConfig:
     max_retries: int = 1
     temperature: float = 0.7
     max_tokens: int = 4096
-    model_override: Optional[str] = None  # Override the connector's default model
+    model_override: str | None = None  # Override the connector's default model
 
 
 class BaseConnector(ABC):
@@ -80,3 +80,20 @@ class BaseConnector(ABC):
             "capabilities": self.capabilities,
             "is_available": self.is_available,
         }
+
+    async def stream_query(
+        self,
+        prompt: str,
+        sub_query: str,
+        config: ConnectorConfig,
+    ) -> AsyncIterator[str]:
+        """Incremental text output for streaming endpoints.
+
+        Default implementation delegates to query() and yields the full
+        content once. Providers with native streaming APIs override this
+        to yield real deltas.
+        """
+        response = await self.query(prompt, sub_query, config)
+        if response.status != ConnectorStatus.SUCCESS or not response.content:
+            return
+        yield response.content

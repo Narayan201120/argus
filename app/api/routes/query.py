@@ -1,55 +1,50 @@
 import asyncio
 import time
 import uuid
+from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
+from app.api.routes.shared import resolve_request_connectors
 from app.api.schemas import ModelStatus, QueryRequest, QueryResponse, TokenUsageOut
-from app.connectors.base import ConnectorConfig, ConnectorResponse, ConnectorStatus, TokenUsage
-from app.connectors.registry import registry
+from app.cache import ResponseCache
+from app.config import settings
+from app.connectors.base import (
+    ConnectorConfig,
+    ConnectorResponse,
+    ConnectorStatus,
+    TokenUsage,
+)
 from app.orchestration.aggregator import synthesize
+from app.orchestration.binding import binding_service
 from app.orchestration.decomposer import _is_simple_query, build_parallel_plan
-from app.orchestration.workers import run_analysis_task, run_research_task, run_verification_task
+from app.orchestration.workers import (
+    WorkerOutcome,
+    run_analysis_task,
+    run_research_task,
+    run_verification_task,
+)
+from app.rediskit import holder
 from app.utils.logger import get_logger
 
 router = APIRouter()
 logger = get_logger(__name__)
 
-ROLE_PREFERENCES = {
-    "researcher": ["gemini", "openai", "claude", "mistral"],
-    "analyzer": ["openai", "mistral", "claude", "gemini"],
-    "verifier": ["claude", "mistral", "openai", "gemini"],
-    "direct": ["claude", "openai", "gemini", "mistral"],
-}
-
-
-def _select_connector(active_connectors, role: str, excluded_ids: set[str] | None = None):
-    excluded_ids = excluded_ids or set()
-    by_id = {connector.connector_id: connector for connector in active_connectors}
-
-    for connector_id in ROLE_PREFERENCES[role]:
-        connector = by_id.get(connector_id)
-        if connector is not None and connector.connector_id not in excluded_ids:
-            return connector
-
-    for connector in active_connectors:
-        if connector.connector_id not in excluded_ids:
-            return connector
-
-    return active_connectors[-1]
+WorkerRole = Literal["researcher", "analyzer", "verifier"]
+ROLE_ORDER: tuple[WorkerRole, ...] = ("researcher", "analyzer", "verifier")
 
 
 def _build_status(
     connector_id: str,
     objective: str,
-    output,
-    latency_ms: int,
+    output: WorkerOutcome | BaseException,
+    fallback_latency_ms: int,
 ) -> ConnectorResponse:
-    if isinstance(output, Exception):
+    if isinstance(output, BaseException):
         return ConnectorResponse(
             model_id=connector_id,
             content="",
-            latency_ms=latency_ms,
+            latency_ms=fallback_latency_ms,
             token_usage=TokenUsage(),
             status=ConnectorStatus.ERROR,
             error=str(output),
@@ -58,9 +53,9 @@ def _build_status(
 
     return ConnectorResponse(
         model_id=connector_id,
-        content=output.model_dump_json(indent=2),
-        latency_ms=latency_ms,
-        token_usage=TokenUsage(),
+        content=output.result.model_dump_json(indent=2),
+        latency_ms=max(output.response.latency_ms, 0),
+        token_usage=output.response.token_usage,
         status=ConnectorStatus.SUCCESS,
         sub_query=objective,
     )
@@ -76,63 +71,79 @@ def _token_usage_out(token_usage: TokenUsage | None) -> TokenUsageOut | None:
     )
 
 
+def _cache_payload(request: QueryRequest) -> dict:
+    return {
+        "query": request.query,
+        "model_config": request.model_config_.model_dump(exclude_none=True),
+    }
+
+
+def _response_cache() -> ResponseCache | None:
+    if settings.cache_enabled and holder.available:
+        return holder.cache
+    return None
+
+
 @router.post("/query", response_model=QueryResponse)
 async def run_query(request: QueryRequest) -> QueryResponse:
     request_id = str(uuid.uuid4())
     total_start = time.monotonic()
-    requested_connector_ids = request.model_config_.connectors or registry.ids()
+
+    cache = _response_cache()
+    cache_payload = _cache_payload(request)
+    if cache is not None:
+        cached_body = await cache.get(cache_payload)
+        if cached_body is not None:
+            cached_response = QueryResponse.model_validate(cached_body)
+            logger.info({
+                "message": "Query served from cache",
+                "request_id": request_id,
+                "cached_request_id": cached_response.request_id,
+            })
+            cached_response.cache_hit = True
+            return cached_response
+
+    mc = request.model_config_
+    active_connectors, role_binding_overrides = resolve_request_connectors(request)
 
     logger.info({
         "message": "Query received",
         "request_id": request_id,
         "query_length": len(request.query),
-        "requested_connectors": requested_connector_ids,
+        "requested_connectors": [c.connector_id for c in active_connectors],
+        "profile": mc.profile,
+        "role_bindings": role_binding_overrides or None,
     })
 
-    unknown_connector_ids = sorted(set(requested_connector_ids) - set(registry.ids()))
-    if unknown_connector_ids:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Unknown connector IDs: {', '.join(unknown_connector_ids)}",
-        )
-
-    active_connectors = [
-        registry.get(connector_id)
-        for connector_id in requested_connector_ids
-        if registry.get(connector_id) and registry.get(connector_id).is_available
-    ]
-
-    if not active_connectors:
-        raise HTTPException(
-            status_code=503,
-            detail="No available connectors for the requested model_config.",
-        )
-
     connector_config = ConnectorConfig(
-        timeout_s=request.model_config_.timeout_s,
-        max_tokens=request.model_config_.max_tokens,
-        temperature=request.model_config_.temperature,
+        timeout_s=mc.timeout_s,
+        max_tokens=mc.max_tokens,
+        temperature=mc.temperature,
     )
+    available_by_id = {connector.connector_id: connector for connector in active_connectors}
     synthesizer_chain = [
-        connector
-        for connector_id in ROLE_PREFERENCES["direct"]
-        for connector in active_connectors
-        if connector.connector_id == connector_id
+        available_by_id[connector_id]
+        for connector_id in binding_service.preference_chain("synthesizer", role_binding_overrides)
+        if connector_id in available_by_id
     ]
+    role_assignments: dict[str, str] = {}
 
     decompose_start = time.monotonic()
     short_circuited = _is_simple_query(request.query)
     decompose_ms = int((time.monotonic() - decompose_start) * 1000)
 
     if short_circuited:
-        direct_connector = _select_connector(active_connectors, "direct")
+        direct_connector = binding_service.select_connector(
+            active_connectors, "direct", overrides=role_binding_overrides,
+        )
+        role_assignments["direct"] = direct_connector.connector_id
         direct_response = await direct_connector.query(
             prompt="You are the direct response layer of an AI orchestration system.",
             sub_query=request.query,
             config=connector_config,
         )
         total_ms = int((time.monotonic() - total_start) * 1000)
-        return QueryResponse(
+        response = QueryResponse(
             request_id=request_id,
             query=request.query,
             result=direct_response.content or "Unable to generate a response.",
@@ -150,18 +161,32 @@ async def run_query(request: QueryRequest) -> QueryResponse:
             ],
             latency_breakdown={"decompose_ms": decompose_ms, "total_ms": total_ms},
             short_circuited=True,
+            role_assignments=role_assignments,
         )
+        if cache is not None and direct_response.status == ConnectorStatus.SUCCESS:
+            await cache.set(cache_payload, response.model_dump(mode="json"))
+        return response
 
     plan = build_parallel_plan(query=request.query, request_id=request_id)
 
     dispatch_start = time.monotonic()
-    research_connector = _select_connector(active_connectors, "researcher")
-    analysis_connector = _select_connector(active_connectors, "analyzer")
-    verification_connector = _select_connector(
+    research_connector = binding_service.select_connector(
+        active_connectors, "researcher", overrides=role_binding_overrides,
+    )
+    analysis_connector = binding_service.select_connector(
+        active_connectors, "analyzer", overrides=role_binding_overrides,
+    )
+    verification_connector = binding_service.select_connector(
         active_connectors,
         "verifier",
         {research_connector.connector_id, analysis_connector.connector_id},
+        overrides=role_binding_overrides,
     )
+    role_assignments.update({
+        "researcher": research_connector.connector_id,
+        "analyzer": analysis_connector.connector_id,
+        "verifier": verification_connector.connector_id,
+    })
 
     research_output, analysis_output, verification_output = await asyncio.gather(
         run_research_task(
@@ -186,24 +211,24 @@ async def run_query(request: QueryRequest) -> QueryResponse:
     )
     dispatch_ms = int((time.monotonic() - dispatch_start) * 1000)
 
-    response_bundle = {
+    response_bundle: dict[str, ConnectorResponse] = {
         "researcher": _build_status(
             connector_id=research_connector.connector_id,
             objective=plan.research_task.objective,
             output=research_output,
-            latency_ms=dispatch_ms,
+            fallback_latency_ms=dispatch_ms,
         ),
         "analyzer": _build_status(
             connector_id=analysis_connector.connector_id,
             objective=plan.analysis_task.objective,
             output=analysis_output,
-            latency_ms=dispatch_ms,
+            fallback_latency_ms=dispatch_ms,
         ),
         "verifier": _build_status(
             connector_id=verification_connector.connector_id,
             objective=plan.verification_task.objective,
             output=verification_output,
-            latency_ms=dispatch_ms,
+            fallback_latency_ms=dispatch_ms,
         ),
     }
 
@@ -219,25 +244,27 @@ async def run_query(request: QueryRequest) -> QueryResponse:
     model_statuses = [
         ModelStatus(
             role=role,
-            connector_id=response.model_id,
-            status=response.status.value,
-            latency_ms=response.latency_ms,
-            error=response.error,
-            token_usage=_token_usage_out(response.token_usage),
-            sub_query=response.sub_query,
+            connector_id=response_bundle[role].model_id,
+            status=response_bundle[role].status.value,
+            latency_ms=response_bundle[role].latency_ms,
+            error=response_bundle[role].error,
+            token_usage=_token_usage_out(response_bundle[role].token_usage),
+            sub_query=response_bundle[role].sub_query,
         )
-        for role, response in response_bundle.items()
+        for role in ROLE_ORDER
     ]
 
     total_ms = int((time.monotonic() - total_start) * 1000)
+    role_assignments["synthesizer"] = synthesizer_used
     logger.info({
         "message": "Query complete",
         "request_id": request_id,
         "synthesizer": synthesizer_used,
+        "role_assignments": role_assignments,
         "total_ms": total_ms,
     })
 
-    return QueryResponse(
+    response = QueryResponse(
         request_id=request_id,
         query=request.query,
         result=result,
@@ -249,4 +276,8 @@ async def run_query(request: QueryRequest) -> QueryResponse:
             "synthesis_ms": synthesis_ms,
             "total_ms": total_ms,
         },
+        role_assignments=role_assignments,
     )
+    if cache is not None:
+        await cache.set(cache_payload, response.model_dump(mode="json"))
+    return response

@@ -1,6 +1,7 @@
 import asyncio
 import time
 
+from app.config import settings
 from app.connectors.base import (
     BaseConnector,
     ConnectorConfig,
@@ -8,7 +9,6 @@ from app.connectors.base import (
     ConnectorStatus,
     TokenUsage,
 )
-from app.config import settings
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -78,10 +78,11 @@ class OpenAIConnector(BaseConnector):
             latency_ms = int((time.monotonic() - start) * 1000)
             content = response.choices[0].message.content or ""
 
+            raw_usage = response.usage
             usage = TokenUsage(
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
-                total_tokens=response.usage.total_tokens,
+                prompt_tokens=raw_usage.prompt_tokens if raw_usage else 0,
+                completion_tokens=raw_usage.completion_tokens if raw_usage else 0,
+                total_tokens=raw_usage.total_tokens if raw_usage else 0,
             )
 
             return ConnectorResponse(
@@ -93,7 +94,7 @@ class OpenAIConnector(BaseConnector):
                 sub_query=sub_query,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             latency_ms = int((time.monotonic() - start) * 1000)
             logger.warning({"message": "OpenAI timeout", "latency_ms": latency_ms})
             return ConnectorResponse(
@@ -121,3 +122,47 @@ class OpenAIConnector(BaseConnector):
 
     async def health_check(self) -> bool:
         return bool(self.api_key)
+
+    async def stream_query(
+        self,
+        prompt: str,
+        sub_query: str,
+        config: ConnectorConfig,
+    ):
+        """Native token streaming for OpenAI chat completions."""
+        if not self.api_key:
+            return
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(api_key=self.api_key)
+        model = config.model_override or self.default_model
+        stream = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a specialized AI assistant. "
+                        "Answer only the specific task given to you. "
+                        "The original user query is provided for context only."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Original user query (context): {prompt}\n\n"
+                        f"Your specific task: {sub_query}"
+                    ),
+                },
+            ],
+            max_tokens=config.max_tokens,
+            temperature=config.temperature,
+            stream=True,
+        )
+        try:
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        finally:
+            await stream.close()
+
