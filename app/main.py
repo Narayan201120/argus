@@ -21,6 +21,7 @@ from app.metrics import PrometheusMiddleware
 from app.metrics import router as metrics_router
 from app.ratelimit import RateLimitMiddleware
 from app.rediskit import close_redis, connect_redis, holder
+from app.tracing import configure_tracing
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -30,6 +31,8 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     # ── Startup ──────────────────────────────────────────────────────────────
     logger.info({"message": "ARGUS starting up", "version": settings.app_version})
+
+    configure_tracing()
 
     registry.register(GeminiConnector())
     registry.register(OpenAIConnector())

@@ -1,0 +1,11 @@
+# Prometheus scrape config for the ARGUS observability profile.
+# The API is reachable inside the compose network as "api".
+global:
+  scrape_interval: 5s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: argus
+    metrics_path: /v1/metrics
+    static_configs:
+      - targets: ["api:8000"]

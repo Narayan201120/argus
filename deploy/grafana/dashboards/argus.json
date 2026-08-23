@@ -1,0 +1,147 @@
+{
+  "title": "ARGUS Overview",
+  "uid": "argus-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "tags": ["argus"],
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Requests / sec",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "argus-prometheus" },
+      "targets": [{ "expr": "sum(rate(argus_http_requests_total[1m]))", "legendFormat": "rps" }]
+    },
+    {
+      "id": 2,
+      "title": "In-flight requests",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "argus-prometheus" },
+      "targets": [{ "expr": "argus_http_in_flight", "legendFormat": "in-flight" }]
+    },
+    {
+      "id": 3,
+      "title": "Cache hit ratio",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "argus-prometheus" },
+      "targets": [{
+        "expr": "sum(rate(argus_cache_operations_total{result=\"hit\"}[5m])) / sum(rate(argus_cache_operations_total[5m]))",
+        "legendFormat": "hit ratio"
+      }]
+    },
+    {
+      "id": 4,
+      "title": "Rate-limit rejections / sec",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "argus-prometheus" },
+      "targets": [{ "expr": "sum(rate(argus_rate_limit_rejections_total[5m]))", "legendFormat": "429/s" }]
+    },
+    {
+      "id": 5,
+      "title": "Request rate by endpoint",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "argus-prometheus" },
+      "targets": [{
+        "expr": "sum by (path) (rate(argus_http_requests_total[5m]))",
+        "legendFormat": "{{method}} {{path}}"
+      }]
+    },
+    {
+      "id": 6,
+      "title": "HTTP latency p50 / p95 (s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "argus-prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le) (rate(argus_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(argus_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Role outcomes / sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "argus-prometheus" },
+      "targets": [{
+        "expr": "sum by (role, status) (rate(argus_role_outcomes_total[5m]))",
+        "legendFormat": "{{role}} {{status}}"
+      }]
+    },
+    {
+      "id": 8,
+      "title": "Tokens / min by role",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "argus-prometheus" },
+      "targets": [{
+        "expr": "sum by (role) (rate(argus_role_tokens_total[5m])) * 60",
+        "legendFormat": "{{role}} {{type}}"
+      }]
+    },
+    {
+      "id": 9,
+      "title": "Role latency p95 (s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "argus-prometheus" },
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum by (le, role) (rate(argus_role_latency_seconds_bucket[5m])))",
+        "legendFormat": "{{role}}"
+      }]
+    },
+    {
+      "id": 10,
+      "title": "Router decisions / sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "argus-prometheus" },
+      "targets": [{
+        "expr": "sum by (method, matched_profile) (rate(argus_router_decisions_total[5m]))",
+        "legendFormat": "{{method}} {{matched_profile}}"
+      }]
+    },
+    {
+      "id": 11,
+      "title": "Transcriptions / sec by outcome",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 30 },
+      "datasource": { "type": "prometheus", "uid": "argus-prometheus" },
+      "targets": [{
+        "expr": "sum by (status) (rate(argus_transcriptions_total[5m]))",
+        "legendFormat": "{{status}}"
+      }]
+    },
+    {
+      "id": 12,
+      "title": "Transcription latency p95 (s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 30 },
+      "datasource": { "type": "prometheus", "uid": "argus-prometheus" },
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum by (le) (rate(argus_transcription_latency_seconds_bucket[5m])))",
+        "legendFormat": "p95"
+      }]
+    },
+    {
+      "id": 13,
+      "title": "Report jobs / sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 38 },
+      "datasource": { "type": "prometheus", "uid": "argus-prometheus" },
+      "targets": [{
+        "expr": "sum by (status) (rate(argus_report_jobs_total[5m]))",
+        "legendFormat": "{{status}}"
+      }]
+    }
+  ]
+}

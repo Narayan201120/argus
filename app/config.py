@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     transcription_timeout_s: int = 60
     audio_max_upload_bytes: int = 10 * 1024 * 1024
 
+    # Tracing (opt-in OpenTelemetry)
+    tracing_enabled: bool = False
+    tracing_exporter: str = "console"
+    tracing_otlp_endpoint: str | None = None
+
     # Authentication (opt-in)
     auth_enabled: bool = False
     jwt_secret: str | None = None

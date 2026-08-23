@@ -18,6 +18,7 @@ from app.api.routes.query import run_query
 from app.api.schemas import AudioQueryResponse, ConnectorConfigRequest, QueryRequest, TranscriptionResponse
 from app.config import settings
 from app.metrics import TRANSCRIPTION_LATENCY, TRANSCRIPTIONS
+from app.tracing import span
 from app.transcription import TranscriptionError, get_transcriber, validate_upload
 from app.utils.logger import get_logger
 
@@ -52,7 +53,13 @@ async def _transcribe_upload(file: UploadFile) -> TranscriptionResponse:
 
     start = time.monotonic()
     try:
-        result = await transcriber.transcribe(content, file.filename or "audio", file.content_type)
+        with span(
+            "transcription.sarvam",
+            {"argus.audio_bytes": len(content), "argus.audio_model": settings.sarvam_stt_model},
+        ) as current:
+            result = await transcriber.transcribe(content, file.filename or "audio", file.content_type)
+            if current is not None:
+                current.set_attribute("argus.text_length", len(result.text))
     except TranscriptionError as exc:
         latency = time.monotonic() - start
         TRANSCRIPTION_LATENCY.observe(latency)
