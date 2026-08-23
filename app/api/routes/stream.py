@@ -20,6 +20,7 @@ from app.api.routes.query import _build_status, _token_usage_out
 from app.api.routes.shared import resolve_request_connectors
 from app.api.schemas import ModelStatus, QueryRequest, QueryResponse
 from app.connectors.base import BaseConnector, ConnectorConfig, ConnectorResponse
+from app.metrics import record_role_outcome, record_role_tokens
 from app.orchestration.aggregator import synthesize_stream
 from app.orchestration.binding import binding_service
 from app.orchestration.decomposer import _is_simple_query, build_parallel_plan
@@ -162,6 +163,7 @@ async def stream_query(request: QueryRequest) -> StreamingResponse:
                 objective=task_obj.objective,
                 output=outputs_by_role[role],
                 fallback_latency_ms=dispatch_ms,
+                role=role,
             )
 
         available_by_id = {c.connector_id: c for c in active_connectors}
@@ -218,6 +220,10 @@ async def stream_query(request: QueryRequest) -> StreamingResponse:
             sub_query=request.query,
             config=connector_config,
         )
+        record_role_outcome(
+            "direct", response.model_id, response.status.value, response.latency_ms
+        )
+        record_role_tokens("direct", response.model_id, response.token_usage)
         await emit("role_complete", _role_complete(
             role="direct",
             connector_id=direct.connector_id,

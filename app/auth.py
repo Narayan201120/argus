@@ -24,6 +24,7 @@ EXEMPT_PATHS = frozenset({
     "/openapi.json",
     "/v1/health",
     "/v1/auth/token",
+    "/v1/metrics",
 })
 
 

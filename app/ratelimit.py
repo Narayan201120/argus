@@ -12,6 +12,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.config import settings
+from app.metrics import RATE_LIMIT_REJECTIONS
+
+EXEMPT_PATHS = frozenset({"/v1/health", "/v1/metrics"})
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -24,7 +27,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if (
             client is None
             or not settings.rate_limit_enabled
-            or request.url.path == "/v1/health"
+            or request.url.path in EXEMPT_PATHS
         ):
             return await call_next(request)
 
@@ -37,6 +40,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if current > settings.rate_limit_max_requests:
+            RATE_LIMIT_REJECTIONS.inc()
             retry_after = retry_seconds()
             return JSONResponse(
                 status_code=429,

@@ -16,6 +16,8 @@ from app.connectors.gemini import GeminiConnector
 from app.connectors.mistral import MistralConnector
 from app.connectors.openai import OpenAIConnector
 from app.connectors.registry import registry
+from app.metrics import PrometheusMiddleware
+from app.metrics import router as metrics_router
 from app.ratelimit import RateLimitMiddleware
 from app.rediskit import close_redis, connect_redis, holder
 from app.utils.logger import get_logger
@@ -58,6 +60,7 @@ app = FastAPI(
 
 app.add_middleware(RateLimitMiddleware, holder=holder)
 app.add_middleware(JWTAuthMiddleware)
+app.add_middleware(PrometheusMiddleware)
 
 app.include_router(auth_router.router, prefix="/v1", tags=["Auth"])
 app.include_router(query_router.router, prefix="/v1", tags=["Query"])
@@ -65,6 +68,7 @@ app.include_router(stream_router.router, prefix="/v1", tags=["Query"])
 app.include_router(reports_router.router, prefix="/v1", tags=["Reports"])
 app.include_router(health_router.router, prefix="/v1", tags=["Health"])
 app.include_router(models_router.router, prefix="/v1", tags=["Models"])
+app.include_router(metrics_router, prefix="/v1", tags=["Metrics"])
 
 
 @app.get("/", tags=["Root"])

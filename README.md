@@ -100,6 +100,10 @@ Set `model_config.role_bindings` to override which provider fills `researcher`, 
 
 Responses expose `router_strategy` and `matched_profile` so callers can see which path served the request.
 
+## Observability
+
+`GET /v1/metrics` exposes Prometheus-format metrics from the default registry: HTTP request counts and latency histograms per route template (`argus_http_requests_total`, `argus_http_request_duration_seconds`), in-flight gauge (`argus_http_in_flight`), cache hit/miss counters (`argus_cache_operations_total`), rate-limit rejections (`argus_rate_limit_rejections_total`), per-role worker outcomes/latency/token series (`argus_role_outcomes_total`, `argus_role_latency_seconds`, `argus_role_tokens_total`), and report job acceptance (`argus_report_jobs_total`). The endpoint is exempt from both auth and rate limiting so scrapers never need tokens.
+
 ## Testing
 
 ```powershell

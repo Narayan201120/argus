@@ -10,6 +10,7 @@ from app.api.schemas import (
     ReportJobStatus,
 )
 from app.connectors.base import ConnectorConfig
+from app.metrics import REPORT_JOBS
 from app.orchestration.report_jobs import report_job_store
 from app.orchestration.report_runner import execute_report
 from app.utils.logger import get_logger
@@ -23,6 +24,7 @@ async def create_report(request: QueryRequest) -> ReportCreateResponse:
     resolved = resolve_request_connectors(request)
     active = resolved.active_connectors
     job = await report_job_store.create(request.query)
+    REPORT_JOBS.labels(status="accepted").inc()
 
     config = ConnectorConfig(
         timeout_s=request.model_config_.timeout_s,

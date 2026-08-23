@@ -15,6 +15,7 @@ from app.connectors.base import (
     ConnectorStatus,
     TokenUsage,
 )
+from app.metrics import CACHE_OPERATIONS, record_role_outcome, record_role_tokens
 from app.orchestration.aggregator import synthesize
 from app.orchestration.binding import binding_service
 from app.orchestration.decomposer import _is_simple_query, build_parallel_plan
@@ -39,9 +40,10 @@ def _build_status(
     objective: str,
     output: WorkerOutcome | BaseException,
     fallback_latency_ms: int,
+    role: str,
 ) -> ConnectorResponse:
     if isinstance(output, BaseException):
-        return ConnectorResponse(
+        response = ConnectorResponse(
             model_id=connector_id,
             content="",
             latency_ms=fallback_latency_ms,
@@ -50,15 +52,19 @@ def _build_status(
             error=str(output),
             sub_query=objective,
         )
+    else:
+        response = ConnectorResponse(
+            model_id=connector_id,
+            content=output.result.model_dump_json(indent=2),
+            latency_ms=max(output.response.latency_ms, 0),
+            token_usage=output.response.token_usage,
+            status=ConnectorStatus.SUCCESS,
+            sub_query=objective,
+        )
 
-    return ConnectorResponse(
-        model_id=connector_id,
-        content=output.result.model_dump_json(indent=2),
-        latency_ms=max(output.response.latency_ms, 0),
-        token_usage=output.response.token_usage,
-        status=ConnectorStatus.SUCCESS,
-        sub_query=objective,
-    )
+    record_role_outcome(role, response.model_id, response.status.value, response.latency_ms)
+    record_role_tokens(role, response.model_id, response.token_usage)
+    return response
 
 
 def _token_usage_out(token_usage: TokenUsage | None) -> TokenUsageOut | None:
@@ -94,6 +100,7 @@ async def run_query(request: QueryRequest) -> QueryResponse:
     if cache is not None:
         cached_body = await cache.get(cache_payload)
         if cached_body is not None:
+            CACHE_OPERATIONS.labels(result="hit").inc()
             cached_response = QueryResponse.model_validate(cached_body)
             logger.info({
                 "message": "Query served from cache",
@@ -102,6 +109,7 @@ async def run_query(request: QueryRequest) -> QueryResponse:
             })
             cached_response.cache_hit = True
             return cached_response
+        CACHE_OPERATIONS.labels(result="miss").inc()
 
     mc = request.model_config_
     resolved = resolve_request_connectors(request)
@@ -146,6 +154,13 @@ async def run_query(request: QueryRequest) -> QueryResponse:
             sub_query=request.query,
             config=connector_config,
         )
+        record_role_outcome(
+            "direct",
+            direct_response.model_id,
+            direct_response.status.value,
+            direct_response.latency_ms,
+        )
+        record_role_tokens("direct", direct_response.model_id, direct_response.token_usage)
         total_ms = int((time.monotonic() - total_start) * 1000)
         response = QueryResponse(
             request_id=request_id,
@@ -223,18 +238,21 @@ async def run_query(request: QueryRequest) -> QueryResponse:
             objective=plan.research_task.objective,
             output=research_output,
             fallback_latency_ms=dispatch_ms,
+            role="researcher",
         ),
         "analyzer": _build_status(
             connector_id=analysis_connector.connector_id,
             objective=plan.analysis_task.objective,
             output=analysis_output,
             fallback_latency_ms=dispatch_ms,
+            role="analyzer",
         ),
         "verifier": _build_status(
             connector_id=verification_connector.connector_id,
             objective=plan.verification_task.objective,
             output=verification_output,
             fallback_latency_ms=dispatch_ms,
+            role="verifier",
         ),
     }
 
