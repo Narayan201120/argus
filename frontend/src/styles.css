@@ -1,0 +1,156 @@
+:root {
+  color-scheme: dark;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: #0f1117;
+  color: #e6e8ee;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid #23262f;
+}
+
+header h1 {
+  font-size: 20px;
+  letter-spacing: 2px;
+  margin: 0;
+  color: #7aa2ff;
+}
+
+.controls { display: flex; gap: 12px; }
+
+.controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #8b90a0;
+}
+
+select, textarea, button {
+  background: #171a23;
+  color: #e6e8ee;
+  border: 1px solid #2c3040;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+button { cursor: pointer; }
+button:hover:not(:disabled) { border-color: #7aa2ff; }
+button:disabled { opacity: 0.5; cursor: default; }
+
+.connector-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  font-size: 12px;
+  color: #8b90a0;
+}
+
+.chip {
+  border-radius: 999px;
+  padding: 3px 12px;
+}
+
+.chip.active {
+  border-color: #7aa2ff;
+  color: #7aa2ff;
+  background: rgba(122, 162, 255, 0.08);
+}
+
+.hint { margin-left: auto; }
+
+.thread {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px 4px;
+}
+
+.empty {
+  margin: auto;
+  color: #565b6b;
+}
+
+.message.user .bubble {
+  align-self: flex-end;
+  background: #1d2740;
+  border-color: #2c3a63;
+}
+
+.bubble {
+  background: #171a23;
+  border: 1px solid #2c3040;
+  border-radius: 12px;
+  padding: 10px 14px;
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
+.failure {
+  margin-top: 8px;
+  color: #ff7b72;
+}
+
+.cursor::after {
+  content: '▍';
+  animation: blink 1s steps(1) infinite;
+}
+
+@keyframes blink { 50% { opacity: 0; } }
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+.role-chip, .fact {
+  border: 1px solid #2c3040;
+  border-radius: 999px;
+  padding: 2px 9px;
+  color: #aab0c0;
+}
+
+.role-chip.ok { border-color: #3fb96b; color: #6fdc94; }
+.role-chip.warn { border-color: #d29922; color: #e8b93f; }
+.role-chip.bad { border-color: #f85149; color: #ff7b72; }
+
+footer {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  padding: 12px 0 16px;
+}
+
+footer textarea {
+  flex: 1;
+  resize: none;
+}
+
+footer .stop { border-color: #f85149; color: #ff7b72; }

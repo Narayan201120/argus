@@ -30,3 +30,24 @@ jobs:
 
       - name: Tests (pytest, mock-only)
         run: python -m pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Lint (oxlint)
+        working-directory: frontend
+        run: bun run lint
+
+      - name: Build (tsc + vite)
+        working-directory: frontend
+        run: bun run build

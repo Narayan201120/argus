@@ -91,6 +91,22 @@ class ModelsResponse(BaseModel):
     total: int
 
 
+class RoutingStrategyOut(BaseModel):
+    name: str
+    description: str
+
+
+class RoutingProfileOut(BaseModel):
+    name: str
+    connectors: list[str]
+    description: str
+
+
+class RoutingInfoResponse(BaseModel):
+    strategies: list[RoutingStrategyOut]
+    profiles: list[RoutingProfileOut]
+
+
 class ConnectorHealthStatus(BaseModel):
     connector_id: str
     is_available: bool

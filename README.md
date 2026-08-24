@@ -45,7 +45,8 @@ The API is available at `http://127.0.0.1:8000`, with interactive docs at `/docs
 
 ## API
 
-- `GET /` - service metadata
+- `GET /v1/meta` - service metadata
+- `GET /v1/routing` - router strategies + named profiles (for UI pickers)
 - `GET /v1/health` - live connector availability + Redis status
 - `GET /v1/models` - registered connector profiles
 - `POST /v1/query` - direct or parallel orchestration

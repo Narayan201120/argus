@@ -40,10 +40,20 @@ class StubConnector(BaseConnector):
         return True
 
 
-def test_root():
-    response = client.get("/")
+def test_meta_endpoint():
+    response = client.get("/v1/meta")
     assert response.status_code == 200
     assert "ARGUS" in response.json()["name"]
+
+
+def test_routing_info_exposes_strategies_and_profiles():
+    response = client.get("/v1/routing")
+    assert response.status_code == 200
+    data = response.json()
+    strategy_names = {s["name"] for s in data["strategies"]}
+    assert {"static", "semantic"} <= strategy_names
+    profile_names = {p["name"] for p in data["profiles"]}
+    assert {"research", "code", "analysis", "fast"} <= profile_names
 
 
 def test_health():

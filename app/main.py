@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 
@@ -76,11 +77,25 @@ app.include_router(models_router.router, prefix="/v1", tags=["Models"])
 app.include_router(metrics_router, prefix="/v1", tags=["Metrics"])
 
 
-@app.get("/", tags=["Root"])
-async def root():
+@app.get("/v1/meta", tags=["Root"])
+async def meta():
     return {
-        "name": "ARGUS",
+        "name": settings.app_name,
         "version": settings.app_version,
         "status": "operational",
         "docs": "/docs",
     }
+
+
+# Serve the built React app when it exists (bun run build inside frontend/).
+# Mounted last so every explicit API route keeps priority.
+_frontend_dist = Path("frontend/dist")
+if _frontend_dist.is_dir():
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
+else:
+    logger.warning({
+        "message": "frontend/dist not found; web UI not served",
+        "hint": "cd frontend && bun install && bun run build",
+    })

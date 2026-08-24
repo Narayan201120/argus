@@ -49,6 +49,10 @@ uvicorn*.log
 # Local test audio (owner-provided samples, never committed)
 audio_samples/
 
+# Frontend build artifacts & deps
+frontend/node_modules/
+frontend/dist/
+
 # Redis / local data
 dump.rdb
 
