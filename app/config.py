@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     connector_max_retries: int = 1
     gemini_model: str = "gemini-3.7-flash"
     mistral_model: str = "mistral-medium-latest"
+    # Direct path tries the next provider in the chain when one fails
+    direct_failover: bool = True
 
     # Decomposer
     short_circuit_token_threshold: int = 50

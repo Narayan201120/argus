@@ -161,23 +161,40 @@ async def run_query(request: QueryRequest) -> QueryResponse:
     decompose_ms = int((time.monotonic() - decompose_start) * 1000)
 
     if short_circuited:
-        direct_connector = binding_service.select_connector(
-            active_connectors, "direct", overrides=role_binding_overrides,
-        )
-        role_assignments["direct"] = direct_connector.connector_id
-        direct_response = await _query_with_retry(
-            direct_connector,
-            prompt="You are the direct response layer of an AI orchestration system.",
-            sub_query=request.query,
-            config=connector_config,
-        )
-        record_role_outcome(
-            "direct",
-            direct_response.model_id,
-            direct_response.status.value,
-            direct_response.latency_ms,
-        )
-        record_role_tokens("direct", direct_response.model_id, direct_response.token_usage)
+        # Failover chain: preference order restricted to the active pool.
+        direct_chain = [
+            available_by_id[connector_id]
+            for connector_id in binding_service.preference_chain("direct", role_binding_overrides)
+            if connector_id in available_by_id
+        ] or list(active_connectors)
+        if not settings.direct_failover:
+            direct_chain = direct_chain[:1]
+
+        direct_response: ConnectorResponse | None = None
+        direct_connector = direct_chain[0]
+        for candidate in direct_chain:
+            direct_connector = candidate
+            role_assignments["direct"] = direct_connector.connector_id
+            candidate_response = await _query_with_retry(
+                direct_connector,
+                prompt="You are the direct response layer of an AI orchestration system.",
+                sub_query=request.query,
+                config=connector_config,
+            )
+            record_role_outcome(
+                "direct",
+                candidate_response.model_id,
+                candidate_response.status.value,
+                candidate_response.latency_ms,
+            )
+            record_role_tokens("direct", candidate_response.model_id, candidate_response.token_usage)
+            direct_response = candidate_response
+            if candidate_response.status == ConnectorStatus.SUCCESS:
+                break
+            # Non-success (rate_limited/timeout/error): try the next
+            # provider in the chain instead of failing the request.
+
+        assert direct_response is not None  # chain is non-empty by construction
         total_ms = int((time.monotonic() - total_start) * 1000)
         response = QueryResponse(
             request_id=request_id,

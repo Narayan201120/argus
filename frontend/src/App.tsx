@@ -32,6 +32,26 @@ const STATUS_CLASS: Record<string, string> = {
   skipped: 'muted',
 }
 
+const CONTROLS_KEY = 'argus.controls'
+
+interface SavedControls {
+  connectors?: string[]
+  strategy?: string
+  profile?: string
+}
+
+function loadSavedControls(): SavedControls {
+  try {
+    const raw = localStorage.getItem(CONTROLS_KEY)
+    return raw ? (JSON.parse(raw) as SavedControls) : {}
+  } catch {
+    return {}
+  }
+}
+
+// Evaluated once at module load: initial control state from last session.
+const SAVED_CONTROLS: SavedControls = loadSavedControls()
+
 function totalTokens(statuses?: RoleStatus[]): number {
   if (!statuses) return 0
   return statuses.reduce((sum, s) => sum + (s.token_usage?.total_tokens ?? 0), 0)
@@ -40,9 +60,9 @@ function totalTokens(statuses?: RoleStatus[]): number {
 export default function App() {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [routing, setRouting] = useState<RoutingInfo | null>(null)
-  const [selectedConnectors, setSelectedConnectors] = useState<string[]>([])
-  const [strategy, setStrategy] = useState('static')
-  const [profile, setProfile] = useState('')
+  const [selectedConnectors, setSelectedConnectors] = useState<string[]>(SAVED_CONTROLS.connectors ?? [])
+  const [strategy, setStrategy] = useState(SAVED_CONTROLS.strategy ?? '')
+  const [profile, setProfile] = useState(SAVED_CONTROLS.profile ?? '')
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [busy, setBusy] = useState(false)
@@ -53,9 +73,21 @@ export default function App() {
     getModels().then((m) => setModels(m.connectors)).catch(() => {})
     getRouting().then((r) => {
       setRouting(r)
-      if (r.strategies.length > 0) setStrategy(r.strategies[0].name)
+      // Respect a persisted strategy; only default when none saved.
+      setStrategy((current) => current || r.strategies[0]?.name || '')
     }).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        CONTROLS_KEY,
+        JSON.stringify({ connectors: selectedConnectors, strategy, profile }),
+      )
+    } catch {
+      /* private mode etc. - persistence is best-effort */
+    }
+  }, [selectedConnectors, strategy, profile])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
