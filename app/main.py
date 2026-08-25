@@ -95,7 +95,16 @@ if _frontend_dist.is_dir():
 
     app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
 else:
-    logger.warning({
-        "message": "frontend/dist not found; web UI not served",
-        "hint": "cd frontend && bun install && bun run build",
-    })
+
+    @app.get("/", include_in_schema=False)
+    async def root_without_ui() -> dict:
+        # Guarantee a 200 at "/" even in environments without a frontend
+        # build (CI, API-only deployments) - regression guard for the
+        # auth-exemption contract on /.
+        return {
+            "name": settings.app_name,
+            "version": settings.app_version,
+            "status": "operational",
+            "docs": "/docs",
+            "ui": "not built - run: cd frontend && bun install && bun run build",
+        }

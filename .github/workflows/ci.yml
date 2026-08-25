@@ -28,6 +28,17 @@ jobs:
       - name: Byte-compile (compileall)
         run: python -m compileall -q app tests
 
+      # Build the SPA BEFORE pytest so / serves exactly like production.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
       - name: Tests (pytest, mock-only)
         run: python -m pytest -q
 
