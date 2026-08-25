@@ -1,6 +1,6 @@
 # ARGUS Project Map
 
-Last updated: August 25, 2026 (v0.3.0 + Phase 3 in progress)
+Last updated: August 25, 2026 (v0.4.0 - Phase 3 complete)
 
 ## Current Stage
 
@@ -225,7 +225,8 @@ Gaps: no live-provider integration tests by design (DEC-008);
 ## Roadmap Alignment
 
 Phase 1 (Stages 0-8): COMPLETE. Phase 2 (P2-0..P2-4): COMPLETE at v0.3.0.
-Phase 3 (P3-0..P3-7, DEC-048): IN PROGRESS - P3-0 debt/polish, P3-1 React
-UI, P3-2 voice loop, P3-3 working memory, P3-5 A/B experiments shipped.
-Remaining: P3-6 plugin SDK docs, P3-7 Helm chart + release v0.4.0.
-Deferred: P3-4 local models (no local compute).
+Phase 3 (P3-0..P3-7, DEC-048): COMPLETE at v0.4.0 - debt/polish, React UI,
+voice loop, working memory, A/B experiments + feedback, connector SDK.
+Deferred to future scope: local models (no compute), Kubernetes/Helm
+(revisit when a deployment target exists), long-term memory recall,
+response diff view, streaming TTS.
