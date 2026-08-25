@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     transcription_timeout_s: int = 60
     audio_max_upload_bytes: int = 10 * 1024 * 1024
 
+    # Speech output (Sarvam Bulbul TTS)
+    speech_enabled: bool = True
+    sarvam_tts_model: str = "bulbul:v3"
+    sarvam_tts_speaker: str = "shubh"
+    sarvam_tts_language: str = "en-IN"
+    speech_timeout_s: int = 60
+    speech_max_chars: int = 1500
+
     # Tracing (opt-in OpenTelemetry)
     tracing_enabled: bool = False
     tracing_exporter: str = "console"

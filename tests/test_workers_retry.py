@@ -1,106 +1,58 @@
 import pytest
 
-from app.connectors.base import ConnectorConfig, ConnectorResponse, ConnectorStatus, TokenUsage
-from app.orchestration.contracts import SharedTaskState
-from app.orchestration.workers import _query_with_retry
+from app.connectors.base import (
+    BaseConnector,
+    ConnectorConfig,
+    ConnectorResponse,
+    ConnectorStatus,
+    TokenUsage,
+)
+from app.orchestration.workers import RoleTaskError, run_connector_query
 
-QUERY = "What is Python?"
-SUB_QUERY = "collect facts"
 
+class CountingConnector(BaseConnector):
+    connector_id = "counting"
+    display_name = "Counting"
+    capabilities = ["text"]
+    is_available = True
 
-class ScriptedConnector:
-    """Minimal stand-in returning queued responses per call."""
-
-    connector_id = "scripted"
-
-    def __init__(self, *responses: ConnectorResponse):
-        self._responses = list(responses)
+    def __init__(self, status=ConnectorStatus.SUCCESS):
+        self.status = status
         self.calls = 0
 
     async def query(self, prompt, sub_query, config):
         self.calls += 1
-        return self._responses.pop(0)
+        return ConnectorResponse(
+            model_id="stub-model",
+            content="" if self.status != ConnectorStatus.SUCCESS else "ok",
+            latency_ms=5,
+            token_usage=TokenUsage(1, 1, 2),
+            status=self.status,
+            error=None if self.status == ConnectorStatus.SUCCESS else "provider issue",
+        )
 
-
-def _response(status: ConnectorStatus) -> ConnectorResponse:
-    return ConnectorResponse(
-        model_id="scripted-model",
-        content="{}" if status == ConnectorStatus.SUCCESS else "",
-        latency_ms=5,
-        token_usage=TokenUsage(),
-        status=status,
-        sub_query=SUB_QUERY,
-    )
-
-
-def _shared_state() -> SharedTaskState:
-    return SharedTaskState(
-        request_id="req-1",
-        original_query=QUERY,
-        main_objective=QUERY,
-        expected_final_output="json",
-    )
+    async def health_check(self):
+        return True
 
 
 @pytest.mark.asyncio
-async def test_retry_returns_success_without_second_call():
-    connector = ScriptedConnector(_response(ConnectorStatus.SUCCESS))
-    response = await _query_with_retry(
-        connector, QUERY, SUB_QUERY, ConnectorConfig(max_retries=1)
-    )
+async def test_success_passthrough():
+    connector = CountingConnector()
+    response = await run_connector_query(connector, "p", "s", ConnectorConfig())
     assert response.status == ConnectorStatus.SUCCESS
     assert connector.calls == 1
 
 
 @pytest.mark.asyncio
-async def test_timeout_retries_once_then_succeeds():
-    connector = ScriptedConnector(
-        _response(ConnectorStatus.TIMEOUT),
-        _response(ConnectorStatus.SUCCESS),
-    )
-    response = await _query_with_retry(
-        connector, QUERY, SUB_QUERY, ConnectorConfig(max_retries=1)
-    )
-    assert response.status == ConnectorStatus.SUCCESS
-    assert connector.calls == 2
-
-
-@pytest.mark.asyncio
-async def test_timeout_exhausts_retries():
-    connector = ScriptedConnector(
-        _response(ConnectorStatus.TIMEOUT),
-        _response(ConnectorStatus.TIMEOUT),
-    )
-    response = await _query_with_retry(
-        connector, QUERY, SUB_QUERY, ConnectorConfig(max_retries=1)
-    )
+async def test_timeout_is_not_retried_same_provider():
+    """Timeout consumes the whole budget: no same-provider second attempt."""
+    connector = CountingConnector(status=ConnectorStatus.TIMEOUT)
+    response = await run_connector_query(connector, "p", "s", ConnectorConfig())
     assert response.status == ConnectorStatus.TIMEOUT
-    assert connector.calls == 2
-
-
-@pytest.mark.asyncio
-async def test_no_retry_when_max_retries_zero():
-    connector = ScriptedConnector(_response(ConnectorStatus.TIMEOUT))
-    response = await _query_with_retry(
-        connector, QUERY, SUB_QUERY, ConnectorConfig(max_retries=0)
-    )
-    assert response.status == ConnectorStatus.TIMEOUT
-    assert connector.calls == 1
-
-
-@pytest.mark.asyncio
-async def test_error_is_not_retried():
-    connector = ScriptedConnector(_response(ConnectorStatus.ERROR))
-    response = await _query_with_retry(
-        connector, QUERY, SUB_QUERY, ConnectorConfig(max_retries=1)
-    )
-    assert response.status == ConnectorStatus.ERROR
-    assert connector.calls == 1
+    assert connector.calls == 1  # exactly one attempt, no doubling
 
 
 def test_role_task_error_preserves_response_and_hint():
-    from app.orchestration.workers import RoleTaskError
-
     response = ConnectorResponse(
         model_id="gemini",
         content="",

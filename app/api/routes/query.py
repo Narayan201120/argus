@@ -22,8 +22,8 @@ from app.orchestration.decomposer import _is_simple_query, build_parallel_plan
 from app.orchestration.workers import (
     RoleTaskError,
     WorkerOutcome,
-    _query_with_retry,
     run_analysis_task,
+    run_connector_query,
     run_research_task,
     run_verification_task,
 )
@@ -175,7 +175,7 @@ async def run_query(request: QueryRequest) -> QueryResponse:
         for candidate in direct_chain:
             direct_connector = candidate
             role_assignments["direct"] = direct_connector.connector_id
-            candidate_response = await _query_with_retry(
+            candidate_response = await run_connector_query(
                 direct_connector,
                 prompt="You are the direct response layer of an AI orchestration system.",
                 sub_query=request.query,

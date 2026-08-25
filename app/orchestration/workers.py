@@ -128,29 +128,22 @@ class RoleTaskError(Exception):
         super().__init__(f"{role.capitalize()} task failed: {detail}")
 
 
-async def _query_with_retry(
+async def run_connector_query(
     connector: BaseConnector,
     prompt: str,
     sub_query: str,
     config: ConnectorConfig,
 ) -> ConnectorResponse:
-    """Run a connector query with one automatic retry on timeout."""
-    response = await connector.query(prompt, sub_query, config)
+    """Single connector call - the caller owns the time budget.
 
-    if response.status == ConnectorStatus.TIMEOUT and config.max_retries > 0:
-        logger.info({
-            "message": "Retrying connector after timeout",
-            "connector_id": connector.connector_id,
-        })
-        retry_config = ConnectorConfig(
-            timeout_s=config.timeout_s,
-            max_retries=0,
-            temperature=config.temperature,
-            max_tokens=config.max_tokens,
-        )
-        response = await connector.query(prompt, sub_query, retry_config)
-
-    return response
+    A connector timeout consumes the ENTIRE per-request timeout budget
+    (connectors enforce ``config.timeout_s`` via their own wait_for), so
+    same-provider retries are intentionally NOT attempted here: they used
+    to double the worst-case wait invisibly. Resilience lives one layer up:
+    direct-path provider failover across the preference chain, parallel
+    role status propagation, and UI recovery actions.
+    """
+    return await connector.query(prompt, sub_query, config)
 
 
 def _parse_role_result(raw: str, result_model: type[ResultT]) -> ResultT:
@@ -174,7 +167,7 @@ async def _run_role_task(
     if config is None:
         config = replace(DEFAULT_CONFIG[role])
 
-    response = await _query_with_retry(
+    response = await run_connector_query(
         connector=connector,
         prompt=shared_state.original_query,
         sub_query=_build_role_sub_query(shared_state, task, role),
