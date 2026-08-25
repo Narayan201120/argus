@@ -22,6 +22,34 @@ export async function getRouting(): Promise<RoutingInfo> {
   return jsonOrThrow(await fetch('/v1/routing'))
 }
 
+export async function transcribeAudio(file: File): Promise<string> {
+  const form = new FormData()
+  form.append('file', file)
+  const body = await jsonOrThrow<{ text: string }>(
+    await fetch('/v1/transcribe', { method: 'POST', body: form }),
+  )
+  return body.text
+}
+
+export async function speakText(text: string): Promise<string> {
+  const response = await fetch('/v1/speak', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+  if (!response.ok) {
+    let detail = `${response.status}`
+    try {
+      const body = await response.json()
+      if (typeof body.detail === 'string') detail = body.detail
+    } catch {
+      /* keep status-code detail */
+    }
+    throw new Error(detail)
+  }
+  return URL.createObjectURL(await response.blob())
+}
+
 /**
  * POST /v1/query/stream and parse the SSE wire format incrementally.
  * Events: role_complete, synthesis_start, synthesis_token, synthesis_end,

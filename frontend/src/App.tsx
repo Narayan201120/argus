@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { getModels, getRouting, streamQuery } from './api'
+import { getModels, getRouting, speakText, streamQuery, transcribeAudio } from './api'
 import type {
   ModelInfo,
   QueryEnvelope,
@@ -33,11 +33,13 @@ const STATUS_CLASS: Record<string, string> = {
 }
 
 const CONTROLS_KEY = 'argus.controls'
+const SPEAK_CHAR_CAP = 1500 // mirrors SPEECH_MAX_CHARS default; server enforces too
 
 interface SavedControls {
   connectors?: string[]
   strategy?: string
   profile?: string
+  voiceOut?: boolean
 }
 
 function loadSavedControls(): SavedControls {
@@ -66,8 +68,28 @@ export default function App() {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [busy, setBusy] = useState(false)
+  const [lastQuery, setLastQuery] = useState<string | null>(null)
+  const [pendingLabel, setPendingLabel] = useState<string | null>(null)
+  const [elapsed, setElapsed] = useState(0)
+  const [voiceOut, setVoiceOut] = useState(SAVED_CONTROLS.voiceOut ?? false)
+  const [recording, setRecording] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
+  const [speakingKey, setSpeakingKey] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+
+  useEffect(() => {
+    if (!pendingLabel) return
+    let seconds = 0
+    const timer = setInterval(() => {
+      seconds += 1
+      setElapsed(seconds)
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [pendingLabel])
 
   useEffect(() => {
     getModels().then((m) => setModels(m.connectors)).catch(() => {})
@@ -82,12 +104,17 @@ export default function App() {
     try {
       localStorage.setItem(
         CONTROLS_KEY,
-        JSON.stringify({ connectors: selectedConnectors, strategy, profile }),
+        JSON.stringify({
+          connectors: selectedConnectors,
+          strategy,
+          profile,
+          voiceOut,
+        }),
       )
     } catch {
       /* private mode etc. - persistence is best-effort */
     }
-  }, [selectedConnectors, strategy, profile])
+  }, [selectedConnectors, strategy, profile, voiceOut])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -101,22 +128,102 @@ export default function App() {
     )
   }
 
-  async function send() {
-    const query = input.trim()
-    if (!query || busy) return
+  function toggleMic() {
+    if (recording) {
+      recorderRef.current?.stop()
+      return
+    }
+    if (typeof MediaRecorder === 'undefined') {
+      window.alert('This browser does not support audio recording.')
+      return
+    }
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((stream) => {
+        const recorder = new MediaRecorder(stream)
+        chunksRef.current = []
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) chunksRef.current.push(event.data)
+        }
+        recorder.onstop = () => {
+          stream.getTracks().forEach((track) => track.stop())
+          setRecording(false)
+          const type = recorder.mimeType || 'audio/webm'
+          const extension = type.includes('mp3')
+            ? 'mp3'
+            : type.includes('ogg')
+              ? 'ogg'
+              : 'webm'
+          const file = new File([new Blob(chunksRef.current, { type })], `input.${extension}`, { type })
+          setTranscribing(true)
+          transcribeAudio(file)
+            .then((text) => setInput((prev) => (prev ? `${prev} ${text}`.trim() : text)))
+            .catch((err: Error) => window.alert(`Transcription failed: ${err.message}`))
+            .finally(() => setTranscribing(false))
+        }
+        recorder.start()
+        recorderRef.current = recorder
+        setRecording(true)
+      })
+      .catch((err: Error) => window.alert(`Microphone unavailable: ${err.message}`))
+  }
+
+  async function playAnswer(key: string, text: string) {
+    if (speakingKey === key) {
+      audioRef.current?.pause()
+      setSpeakingKey(null)
+      return
+    }
+    audioRef.current?.pause()
+    setSpeakingKey(key)
+    try {
+      // Credit care: cap spoken length regardless of answer size.
+      const url = await speakText(text.slice(0, SPEAK_CHAR_CAP))
+      const audio = new Audio(url)
+      audioRef.current = audio
+      audio.onended = () => setSpeakingKey(null)
+      await audio.play()
+    } catch (err) {
+      setSpeakingKey(null)
+      window.alert(`Speech failed: ${(err as Error).message}`)
+    }
+  }
+
+  function isFailedAnswer(message: ChatMessage): boolean {
+    if (message.failure) return true
+    if (!message.envelope) return false
+    const statuses = message.envelope.model_statuses
+    return (
+      !message.envelope.result.trim() ||
+      (statuses.length > 0 && statuses.every((s) => s.status !== 'success'))
+    )
+  }
+
+  function pickAlternative(message: ChatMessage): string | null {
+    const failed = new Set((message.envelope?.model_statuses ?? []).map((s) => s.connector_id))
+    return available.find((m) => !failed.has(m.connector_id))?.connector_id ?? null
+  }
+
+  async function submit(text: string, pinsOverride?: string[]) {
+    if (!text || busy) return
+    const pins = pinsOverride !== undefined ? pinsOverride : selectedConnectors
+    setLastQuery(text)
+    setElapsed(0) // fresh timer per attempt
+    setPendingLabel(pins.length ? pins.join(', ') : 'auto')
+    if (pinsOverride !== undefined) setSelectedConnectors(pins)
     setInput('')
     setBusy(true)
     setMessages((prev) => [
       ...prev,
-      { kind: 'user', content: query },
+      { kind: 'user', content: text },
       { kind: 'assistant', content: '', streaming: true, trace: [] },
     ])
 
     abortRef.current = new AbortController()
     await streamQuery(
       {
-        query,
-        connectors: selectedConnectors.length ? selectedConnectors : undefined,
+        query: text,
+        connectors: pins.length ? pins : undefined,
         profile: profile || undefined,
         router_strategy: strategy,
         timeout_s: 120,
@@ -141,6 +248,7 @@ export default function App() {
           })
         },
         onSynthesisToken: (delta) => {
+          setPendingLabel(null) // tokens flowing - the wait is over
           setMessages((prev) => {
             const copy = [...prev]
             const last = { ...copy[copy.length - 1] }
@@ -183,10 +291,11 @@ export default function App() {
         copy[copy.length - 1] = last
         return copy
       })
+    }).finally(() => {
+      setPendingLabel(null)
+      setBusy(false)
+      abortRef.current = null
     })
-
-    setBusy(false)
-    abortRef.current = null
   }
 
   return (
@@ -194,6 +303,13 @@ export default function App() {
       <header>
         <h1>ARGUS</h1>
         <div className="controls">
+          <button
+            className={`chip ${voiceOut ? 'active' : ''}`}
+            onClick={() => setVoiceOut((v) => !v)}
+            title="Speak answers aloud (uses Sarvam TTS credits)"
+          >
+            🔊 voice {voiceOut ? 'on' : 'off'}
+          </button>
           <label>
             Strategy
             <select value={strategy} onChange={(e) => setStrategy(e.target.value)}>
@@ -245,7 +361,30 @@ export default function App() {
                 ? message.content
                 : message.content || (message.streaming ? <span className="cursor" /> : '')}
               {message.failure && <div className="failure">{message.failure}</div>}
+              {message.kind === 'assistant' &&
+                message.streaming &&
+                !message.content &&
+                pendingLabel && (
+                  <div className="waiting">
+                    asking {pendingLabel}… {elapsed}s
+                  </div>
+                )}
             </div>
+
+            {message.kind === 'assistant' &&
+              !busy &&
+              lastQuery &&
+              isFailedAnswer(message) &&
+              !message.streaming && (
+                <div className="recover">
+                  {pickAlternative(message) && (
+                    <button onClick={() => submit(lastQuery, [pickAlternative(message)!])}>
+                      Retry with {pickAlternative(message)}
+                    </button>
+                  )}
+                  <button onClick={() => submit(lastQuery, [])}>Unpin &amp; retry all</button>
+                </div>
+              )}
 
             {message.kind === 'assistant' && (message.trace?.length || message.envelope) && (
               <div className="meta">
@@ -271,12 +410,35 @@ export default function App() {
                 )}
               </div>
             )}
+
+            {message.kind === 'assistant' &&
+              voiceOut &&
+              !message.streaming &&
+              !isFailedAnswer(message) &&
+              message.content && (
+                <div className="meta">
+                  <button
+                    className={`chip ${speakingKey === String(index) ? 'active' : ''}`}
+                    onClick={() => playAnswer(String(index), message.content)}
+                  >
+                    {speakingKey === String(index) ? '⏹ stop' : '▶ speak'}
+                  </button>
+                </div>
+              )}
           </article>
         ))}
         <div ref={bottomRef} />
       </main>
 
       <footer>
+        <button
+          className={`mic ${recording ? 'recording' : ''}`}
+          onClick={toggleMic}
+          disabled={busy || transcribing}
+          title={recording ? 'Stop recording' : 'Record a question'}
+        >
+          {recording ? '⏹' : transcribing ? '…' : '🎙'}
+        </button>
         <textarea
           value={input}
           placeholder={busy ? 'ARGUS is thinking…' : 'Ask anything. Enter to send.'}
@@ -284,13 +446,13 @@ export default function App() {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
-              send()
+              submit(input.trim())
             }
           }}
           rows={2}
           disabled={busy}
         />
-        <button onClick={send} disabled={busy || !input.trim()}>
+        <button onClick={() => submit(input.trim())} disabled={busy || !input.trim()}>
           Send
         </button>
         {busy && (

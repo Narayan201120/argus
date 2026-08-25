@@ -154,3 +154,36 @@ footer textarea {
 }
 
 footer .stop { border-color: #f85149; color: #ff7b72; }
+
+.waiting {
+  color: #8b90a0;
+  font-size: 13px;
+}
+
+.recover {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.recover button {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-color: #7aa2ff;
+  color: #7aa2ff;
+}
+
+.mic {
+  font-size: 18px;
+  padding: 8px 14px;
+}
+
+.mic.recording {
+  border-color: #f85149;
+  color: #ff7b72;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% { background: rgba(248, 81, 73, 0.15); }
+}

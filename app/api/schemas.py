@@ -127,6 +127,10 @@ class TranscriptionResponse(BaseModel):
     latency_ms: int
 
 
+class SpeakRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+
+
 class AudioQueryResponse(QueryResponse):
     transcript_text: str
     transcript_language_code: str | None = None

@@ -13,13 +13,26 @@ import time
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import Response
 
 from app.api.routes.query import run_query
-from app.api.schemas import AudioQueryResponse, ConnectorConfigRequest, QueryRequest, TranscriptionResponse
+from app.api.schemas import (
+    AudioQueryResponse,
+    ConnectorConfigRequest,
+    QueryRequest,
+    SpeakRequest,
+    TranscriptionResponse,
+)
 from app.config import settings
-from app.metrics import TRANSCRIPTION_LATENCY, TRANSCRIPTIONS
+from app.metrics import (
+    SPEECH_LATENCY,
+    SPEECH_TOTAL,
+    TRANSCRIPTION_LATENCY,
+    TRANSCRIPTIONS,
+)
 from app.tracing import span
 from app.transcription import TranscriptionError, get_transcriber, validate_upload
+from app.transcription.tts import get_tts
 from app.utils.logger import get_logger
 
 router = APIRouter()
@@ -90,6 +103,50 @@ async def _transcribe_upload(file: UploadFile) -> TranscriptionResponse:
 @router.post("/transcribe", response_model=TranscriptionResponse)
 async def transcribe(file: Annotated[UploadFile, File(...)]) -> TranscriptionResponse:
     return await _transcribe_upload(file)
+
+
+@router.post("/speak")
+async def speak(request: SpeakRequest) -> Response:
+    """Synthesize speech for the given text (Sarvam Bulbul)."""
+    tts = get_tts()
+    if not settings.speech_enabled or tts is None:
+        SPEECH_TOTAL.labels(status="unavailable").inc()
+        raise HTTPException(
+            status_code=503,
+            detail="Speech output is not configured (SARVAM_API_KEY missing or disabled).",
+        )
+
+    text = request.text.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="Text is empty.")
+    if len(text) > settings.speech_max_chars:
+        SPEECH_TOTAL.labels(status="rejected").inc()
+        raise HTTPException(
+            status_code=422,
+            detail=f"Text exceeds the {settings.speech_max_chars} character speech cap.",
+        )
+
+    start = time.monotonic()
+    try:
+        with span(
+            "speech.sarvam",
+            {"argus.speech_chars": len(text), "argus.audio_model": settings.sarvam_tts_model},
+        ) as current:
+            audio = await tts.synthesize(text)
+            if current is not None:
+                current.set_attribute("argus.audio_bytes", len(audio))
+    except TranscriptionError as exc:
+        SPEECH_LATENCY.observe(time.monotonic() - start)
+        if exc.status_code == 429:
+            SPEECH_TOTAL.labels(status="rate_limited").inc()
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+        SPEECH_TOTAL.labels(status="error").inc()
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    SPEECH_LATENCY.observe(time.monotonic() - start)
+    SPEECH_TOTAL.labels(status="success").inc()
+    logger.info({"message": "Speech synthesized", "chars": len(text), "audio_bytes": len(audio)})
+    return Response(content=audio, media_type="audio/wav")
 
 
 @router.post("/query/audio", response_model=AudioQueryResponse)

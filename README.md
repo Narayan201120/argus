@@ -142,7 +142,7 @@ Exit codes: `0` passed, `1` failures, `2` guard refused, `3` usage error.
 
 ## Current Scope
 
-This is a backend-only MVP. The bounded parallel `/v1/query` pipeline remains the fast default path; `POST /v1/report` adds the deep-report mode (planner -> parallel research tracks -> global verification -> writer -> bounded reviewer repair) returning Markdown asynchronously. Shipped alongside it: SSE streaming (`/v1/query/stream`), opt-in JWT auth, Redis caching/rate limiting, an embeddings-first semantic router (`static`/`semantic` strategies with keyword fallback), Sarvam speech-to-text input (`/v1/transcribe`, `/v1/query/audio`), Prometheus metrics with a provisioned Grafana dashboard, and opt-in OpenTelemetry tracing. Deferred: multimodal inputs beyond audio, OAuth2, conversation memory, web UI, Kubernetes.
+This is a backend-only MVP. The bounded parallel `/v1/query` pipeline remains the fast default path; `POST /v1/report` adds the deep-report mode (planner -> parallel research tracks -> global verification -> writer -> bounded reviewer repair) returning Markdown asynchronously. Shipped alongside it: SSE streaming (`/v1/query/stream`), opt-in JWT auth, Redis caching/rate limiting, an embeddings-first semantic router (`static`/`semantic` strategies with keyword fallback), **voice in and out** — Sarvam speech-to-text (`/v1/transcribe`, `/v1/query/audio`) and text-to-speech (`POST /v1/speak` returning WAV) with a built-in web UI featuring a mic button, editable transcripts and spoken answers — Prometheus metrics with a provisioned Grafana dashboard, and opt-in OpenTelemetry tracing. Deferred: multimodal inputs beyond audio, OAuth2, conversation memory, Kubernetes.
 
 ## Security
 

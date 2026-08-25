@@ -76,6 +76,15 @@ TRANSCRIPTION_LATENCY = Histogram(
     "argus_transcription_latency_seconds",
     "End-to-end transcription duration in seconds.",
 )
+SPEECH_TOTAL = Counter(
+    "argus_speech_total",
+    "Text-to-speech attempts by outcome.",
+    ["status"],
+)
+SPEECH_LATENCY = Histogram(
+    "argus_speech_latency_seconds",
+    "End-to-end speech synthesis duration in seconds.",
+)
 
 
 def record_role_outcome(role: str, connector_id: str, status: str, latency_ms: int) -> None:
