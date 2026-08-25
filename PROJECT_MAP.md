@@ -1,6 +1,6 @@
 # ARGUS Project Map
 
-Last updated: August 23, 2026 (v0.3.0)
+Last updated: August 25, 2026 (v0.3.0 + Phase 3 in progress)
 
 ## Current Stage
 
@@ -31,10 +31,12 @@ What is implemented now:
 - CI gate on every push/PR: ruff, mypy, compileall, mock-only pytest
 
 Not implemented (Phase 3 backlog):
-- Conversation memory (Redis sessions)
-- Local model connector (Ollama/LM Studio)
-- Plugin SDK, A/B routing experiments
-- Web UI (mic button), Kubernetes Helm chart
+- Local model connector (Ollama/LM Studio) - deferred, no local compute
+- Plugin SDK
+- Kubernetes Helm chart
+
+In progress (Phase 3): web UI shipped; conversation memory shipped;
+A/B experiments + feedback shipped; plugin SDK + Helm pending.
 
 ## Top-Level Structure
 
@@ -122,6 +124,15 @@ tokens, terminal final envelope)
 
 `app/api/routes/audio.py` - transcribe + voice-query endpoints with
 credit-safety guards (extension allowlist, size cap, no STT retries)
+
+`app/api/routes/sessions.py` - GET/DELETE working-memory sessions
+
+`app/api/routes/feedback.py` - POST/GET quality ratings for A/B routing
+
+`app/memory.py` - SessionStore: Redis rolling Q/A turns per session_id,
+fail-open; bounded transcript builder for prompt injection
+
+`app/feedback.py` - rating persistence (Redis, fail-open)
 
 `app/api/routes/auth.py` - JWT issuance (dev client-credentials)
 
@@ -214,6 +225,7 @@ Gaps: no live-provider integration tests by design (DEC-008);
 ## Roadmap Alignment
 
 Phase 1 (Stages 0-8): COMPLETE. Phase 2 (P2-0..P2-4): COMPLETE at v0.3.0.
-Next up when scheduled (Phase 3 backlog): conversation memory, Ollama/LM
-Studio connector, plugin SDK, A/B routing experiments, web UI (mic
-button), Kubernetes Helm chart.
+Phase 3 (P3-0..P3-7, DEC-048): IN PROGRESS - P3-0 debt/polish, P3-1 React
+UI, P3-2 voice loop, P3-3 working memory, P3-5 A/B experiments shipped.
+Remaining: P3-6 plugin SDK docs, P3-7 Helm chart + release v0.4.0.
+Deferred: P3-4 local models (no local compute).

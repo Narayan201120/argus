@@ -9,7 +9,12 @@ from app.config import settings
 from app.connectors.base import BaseConnector
 from app.connectors.registry import registry
 from app.metrics import ROUTER_DECISIONS
-from app.orchestration.binding import binding_service, semantic_router
+from app.orchestration.binding import (
+    binding_service,
+    parse_router_split,
+    pick_strategy_by_hash,
+    semantic_router,
+)
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -46,7 +51,16 @@ async def resolve_request_connectors(request: QueryRequest) -> ResolvedRouting:
             detail=f"Unknown roles in role_bindings: {', '.join(invalid_roles)}",
         )
 
-    router_strategy = mc.router_strategy or settings.router_strategy
+    if mc.router_strategy:
+        # Explicit per-request choice always wins over experiments.
+        router_strategy = mc.router_strategy
+    else:
+        split = parse_router_split(settings.router_ab_split)
+        if split:
+            router_strategy = pick_strategy_by_hash(split, request.query)
+        else:
+            router_strategy = settings.router_strategy
+
     if not binding_service.known_strategy(router_strategy):
         raise HTTPException(
             status_code=422,

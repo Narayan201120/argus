@@ -128,6 +128,17 @@ class SessionTurn(BaseModel):
     ts: float
 
 
+class FeedbackRequest(BaseModel):
+    request_id: str = Field(..., min_length=8, max_length=128)
+    rating: int = Field(..., ge=1, le=5)
+
+
+class FeedbackResponse(BaseModel):
+    request_id: str
+    rating: int
+    stored: bool
+
+
 class SessionDetail(BaseModel):
     session_id: str
     turns: list[SessionTurn]

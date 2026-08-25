@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { getModels, getRouting, speakText, streamQuery, transcribeAudio } from './api'
+import { getModels, getRouting, postFeedback, speakText, streamQuery, transcribeAudio } from './api'
 import type {
   ModelInfo,
   QueryEnvelope,
@@ -85,6 +85,7 @@ export default function App() {
   const [recording, setRecording] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
   const [speakingKey, setSpeakingKey] = useState<string | null>(null)
+  const [ratings, setRatings] = useState<Record<string, number>>({})
   const abortRef = useRef<AbortController | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -434,6 +435,30 @@ export default function App() {
                     </span>
                   </>
                 )}
+              </div>
+            )}
+
+            {message.kind === 'assistant' && message.envelope && !isFailedAnswer(message) && (
+              <div className="meta rate">
+                <span className="hint">rate:</span>
+                {[1, 2, 3, 4, 5].map((value) => {
+                  const id = message.envelope!.request_id
+                  const selected = ratings[id] ?? 0
+                  return (
+                    <button
+                      key={value}
+                      className={`star ${selected >= value ? 'on' : ''}`}
+                      onClick={() => {
+                        postFeedback(id, value)
+                          .then(() => setRatings((prev) => ({ ...prev, [id]: value })))
+                          .catch(() => {})
+                      }}
+                      title={`Rate ${value}/5`}
+                    >
+                      ★
+                    </button>
+                  )
+                })}
               </div>
             )}
 

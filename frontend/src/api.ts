@@ -50,6 +50,15 @@ export async function speakText(text: string): Promise<string> {
   return URL.createObjectURL(await response.blob())
 }
 
+export async function postFeedback(requestId: string, rating: number): Promise<void> {
+  const response = await fetch('/v1/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request_id: requestId, rating }),
+  })
+  if (!response.ok) throw new Error(`Feedback failed (${response.status})`)
+}
+
 /**
  * POST /v1/query/stream and parse the SSE wire format incrementally.
  * Events: role_complete, synthesis_start, synthesis_token, synthesis_end,

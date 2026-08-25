@@ -187,3 +187,14 @@ footer .stop { border-color: #f85149; color: #ff7b72; }
 @keyframes pulse {
   50% { background: rgba(248, 81, 73, 0.15); }
 }
+
+.rate .star {
+  border: none;
+  background: transparent;
+  color: #565b6b;
+  font-size: 14px;
+  padding: 0 2px;
+}
+
+.rate .star.on { color: #e8b93f; }
+.rate .hint { margin-right: 2px; }

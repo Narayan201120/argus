@@ -46,6 +46,10 @@ The API is available at `http://127.0.0.1:8000`, with interactive docs at `/docs
 ## API
 
 - `GET /v1/meta` - service metadata
+- `POST /v1/query/audio` - voice question: audio in, answer out (Sarvam STT)
+- `POST /v1/speak` - text-to-speech: returns WAV audio (Sarvam Bulbul)
+- `POST /v1/feedback` - rate a past answer 1-5 by `request_id` (A/B quality signal); `GET /v1/feedback/{id}` to read it back
+- `GET /v1/session/{id}` / `DELETE /v1/session/{id}` - inspect or wipe a conversation's working memory
 - `GET /v1/routing` - router strategies + named profiles (for UI pickers)
 - `GET /v1/health` - live connector availability + Redis status
 - `GET /v1/models` - registered connector profiles
@@ -100,6 +104,10 @@ Set `model_config.role_bindings` to override which provider fills `researcher`, 
 - `semantic` - when the caller set no explicit profile, the query is classified against profile descriptions: **embeddings-first** (Gemini/OpenAI embeddings, cosine similarity, `ROUTER_EMBEDDING_THRESHOLD`) with automatic fallback to a keyword classifier on weak matches or embedding failures (60s cooldown). An explicit `model_config.profile` or `model_config.connectors` always wins over inference.
 
 Responses expose `router_strategy` and `matched_profile` so callers can see which path served the request; `argus_router_decisions_total{method,matched_profile}` tracks which mechanism decided.
+
+### A/B experiments
+
+Set `ROUTER_AB_SPLIT=semantic:80,static:20` and every request *without* an explicit strategy is deterministically assigned by hashing its question text (same question → same group). Rate answers with `POST /v1/feedback` and compare per-strategy satisfaction via `argus_feedback_total` in Grafana. Empty setting disables experiments.
 
 ## Observability
 

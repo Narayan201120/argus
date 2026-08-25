@@ -6,6 +6,7 @@ defaults when the file is missing or malformed, mirroring the prompt
 loader fallback pattern.
 """
 
+import hashlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,8 +39,52 @@ DEFAULT_ROLES: dict[str, list[str]] = {
 # the query text when the caller did not set one explicitly.
 ROUTER_STRATEGIES: dict[str, str] = {
     "static": "Fixed YAML preference chains per role (Stage 1 behavior).",
-    "semantic": "Keyword intent classifier picks a named profile per query.",
+    "semantic": "Intent classifier picks a named profile per query.",
 }
+
+
+def parse_router_split(raw: str | None) -> list[tuple[str, float]] | None:
+    """Parse an A/B split string like "semantic:80,static:20".
+
+    Returns cumulative-weight entries for known strategies only, or None
+    when the setting is empty/unusable (fail-open to the default
+    strategy).
+    """
+    if not raw or not raw.strip():
+        return None
+    entries: list[tuple[str, float]] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part or ":" not in part:
+            continue
+        name, _, weight_raw = part.partition(":")
+        name = name.strip().lower()
+        try:
+            weight = float(weight_raw)
+        except ValueError:
+            continue
+        if name in ROUTER_STRATEGIES and weight > 0:
+            entries.append((name, weight))
+    return entries or None
+
+
+def pick_strategy_by_hash(
+    entries: list[tuple[str, float]], query_text: str
+) -> str:
+    """Deterministically assign a strategy by hashing the query text.
+
+    The same question always lands in the same group, which keeps
+    A/B comparisons reproducible.
+    """
+    total = sum(weight for _, weight in entries) or 1.0
+    digest = hashlib.sha256(query_text.encode("utf-8")).digest()
+    point = (int.from_bytes(digest[:8], "big") / 2**64) * total
+    cumulative = 0.0
+    for name, weight in entries:
+        cumulative += weight
+        if point < cumulative:
+            return name
+    return entries[-1][0]
 
 # Intent lexicon fallback for built-in profiles. Profiles may override it
 # per-profile via routing.yaml (`keywords:`); custom profiles without a

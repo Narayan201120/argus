@@ -89,6 +89,11 @@ MEMORY_TRUNCATED_ANSWERS = Counter(
     "argus_memory_truncated_answers_total",
     "Answers stored shorter than generated because they exceeded the memory per-answer cap.",
 )
+FEEDBACK_TOTAL = Counter(
+    "argus_feedback_total",
+    "Quality feedback ratings received, by rating value.",
+    ["rating"],
+)
 
 
 def record_role_outcome(role: str, connector_id: str, status: str, latency_ms: int) -> None:

@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     # Routing / role binding
     routing_config_path: str = "config/routing.yaml"
     router_strategy: str = "static"
+    # A/B experiments: e.g. "semantic:80,static:20". Empty = disabled.
+    # Applies only when the caller did NOT set model_config.router_strategy;
+    # requests are assigned deterministically by hashing the query text.
+    router_ab_split: str = ""
 
     # Semantic router embeddings ('auto' prefers Gemini when its key exists)
     router_embedding_provider: str = "auto"
