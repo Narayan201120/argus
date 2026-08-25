@@ -153,6 +153,7 @@ async def speak(request: SpeakRequest) -> Response:
 async def query_audio(
     file: Annotated[UploadFile, File(...)],
     options: Annotated[str | None, Form()] = None,
+    session_id: Annotated[str | None, Form()] = None,
 ) -> AudioQueryResponse:
     """Transcribe the upload, then answer it through the standard pipeline.
 
@@ -173,6 +174,8 @@ async def query_audio(
 
     request = QueryRequest(query=transcription.text)
     request.model_config_ = model_config_request
+    if session_id:
+        request.session_id = session_id
     response = await run_query(request)
 
     return AudioQueryResponse(

@@ -20,6 +20,7 @@ from app.api.routes.query import _build_status, _token_usage_out
 from app.api.routes.shared import resolve_request_connectors
 from app.api.schemas import ModelStatus, QueryRequest, QueryResponse
 from app.connectors.base import BaseConnector, ConnectorConfig, ConnectorResponse
+from app.memory import load_history_text, session_store
 from app.metrics import record_role_outcome, record_role_tokens
 from app.orchestration.aggregator import synthesize_stream
 from app.orchestration.binding import binding_service
@@ -121,8 +122,14 @@ async def stream_query(request: QueryRequest) -> StreamingResponse:
         ))
         return outcome
 
+    session_history_text = await load_history_text(request.session_id)
+
     async def run_long_pipeline(total_start: float) -> QueryResponse:
-        plan = build_parallel_plan(query=request.query, request_id=request_id)
+        plan = build_parallel_plan(
+            query=request.query,
+            request_id=request_id,
+            conversation_history=session_history_text,
+        )
 
         research_conn = binding_service.select_connector(active_connectors, "researcher", overrides=overrides)
         analysis_conn = binding_service.select_connector(active_connectors, "analyzer", overrides=overrides)
@@ -211,16 +218,22 @@ async def stream_query(request: QueryRequest) -> StreamingResponse:
             role_assignments=assignments,
             router_strategy=resolved.router_strategy,
             matched_profile=resolved.matched_profile,
+            session_id=request.session_id,
         )
 
     async def run_short_pipeline(total_start: float) -> QueryResponse:
         direct = binding_service.select_connector(
             active_connectors, "direct", overrides=overrides,
         )
+        direct_sub_query = (
+            f"{session_history_text}\n\nCurrent question: {request.query}"
+            if session_history_text
+            else request.query
+        )
         response = await run_connector_query(
             direct,
             prompt="You are the direct response layer of an AI orchestration system.",
-            sub_query=request.query,
+            sub_query=direct_sub_query,
             config=connector_config,
         )
         record_role_outcome(
@@ -246,6 +259,7 @@ async def stream_query(request: QueryRequest) -> StreamingResponse:
             role_assignments={"direct": direct.connector_id},
             router_strategy=resolved.router_strategy,
             matched_profile=resolved.matched_profile,
+            session_id=request.session_id,
         )
 
     async def producer() -> None:
@@ -255,6 +269,10 @@ async def stream_query(request: QueryRequest) -> StreamingResponse:
                 envelope = await run_short_pipeline(total_start)
             else:
                 envelope = await run_long_pipeline(total_start)
+            if envelope.result:
+                await session_store.append(
+                    request.session_id or "", request.query, envelope.result
+                )
             await emit("final", envelope.model_dump(mode="json"))
         except Exception as exc:
             logger.error({

@@ -69,6 +69,16 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [busy, setBusy] = useState(false)
   const [lastQuery, setLastQuery] = useState<string | null>(null)
+  const [sessionId, setSessionId] = useState<string>(() => {
+    const existing = sessionStorage.getItem('argus.session')
+    if (existing) return existing
+    const fresh =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `s-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    sessionStorage.setItem('argus.session', fresh)
+    return fresh
+  })
   const [pendingLabel, setPendingLabel] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState(0)
   const [voiceOut, setVoiceOut] = useState(SAVED_CONTROLS.voiceOut ?? false)
@@ -223,6 +233,7 @@ export default function App() {
     await streamQuery(
       {
         query: text,
+        sessionId,
         connectors: pins.length ? pins : undefined,
         profile: profile || undefined,
         router_strategy: strategy,
@@ -303,6 +314,21 @@ export default function App() {
       <header>
         <h1>ARGUS</h1>
         <div className="controls">
+          <button
+            onClick={() => {
+              const fresh =
+                typeof crypto !== 'undefined' && 'randomUUID' in crypto
+                  ? crypto.randomUUID()
+                  : `s-${Date.now()}`
+              sessionStorage.setItem('argus.session', fresh)
+              setSessionId(fresh)
+              setMessages([])
+              setLastQuery(null)
+            }}
+            title="Start a fresh conversation (new session id)"
+          >
+            New chat
+          </button>
           <button
             className={`chip ${voiceOut ? 'active' : ''}`}
             onClick={() => setVoiceOut((v) => !v)}

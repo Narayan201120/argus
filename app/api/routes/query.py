@@ -15,7 +15,12 @@ from app.connectors.base import (
     ConnectorStatus,
     TokenUsage,
 )
-from app.metrics import CACHE_OPERATIONS, record_role_outcome, record_role_tokens
+from app.memory import load_history_text, session_store
+from app.metrics import (
+    CACHE_OPERATIONS,
+    record_role_outcome,
+    record_role_tokens,
+)
 from app.orchestration.aggregator import synthesize
 from app.orchestration.binding import binding_service
 from app.orchestration.decomposer import _is_simple_query, build_parallel_plan
@@ -156,6 +161,9 @@ async def run_query(request: QueryRequest) -> QueryResponse:
     ]
     role_assignments: dict[str, str] = {}
 
+    session_id = request.session_id
+    history_text = await load_history_text(session_id)
+
     decompose_start = time.monotonic()
     short_circuited = _is_simple_query(request.query)
     decompose_ms = int((time.monotonic() - decompose_start) * 1000)
@@ -172,13 +180,19 @@ async def run_query(request: QueryRequest) -> QueryResponse:
 
         direct_response: ConnectorResponse | None = None
         direct_connector = direct_chain[0]
+        # Working memory: short follow-ups benefit from history too.
+        direct_sub_query = (
+            f"{history_text}\n\nCurrent question: {request.query}"
+            if history_text
+            else request.query
+        )
         for candidate in direct_chain:
             direct_connector = candidate
             role_assignments["direct"] = direct_connector.connector_id
             candidate_response = await run_connector_query(
                 direct_connector,
                 prompt="You are the direct response layer of an AI orchestration system.",
-                sub_query=request.query,
+                sub_query=direct_sub_query,
                 config=connector_config,
             )
             record_role_outcome(
@@ -218,12 +232,19 @@ async def run_query(request: QueryRequest) -> QueryResponse:
             role_assignments=role_assignments,
             router_strategy=resolved.router_strategy,
             matched_profile=resolved.matched_profile,
+            session_id=session_id,
         )
+        if direct_response.status == ConnectorStatus.SUCCESS:
+            await session_store.append(session_id or "", request.query, response.result)
         if cache is not None and direct_response.status == ConnectorStatus.SUCCESS:
             await cache.set(cache_payload, response.model_dump(mode="json"))
         return response
 
-    plan = build_parallel_plan(query=request.query, request_id=request_id)
+    plan = build_parallel_plan(
+        query=request.query,
+        request_id=request_id,
+        conversation_history=history_text,
+    )
 
     dispatch_start = time.monotonic()
     research_connector = binding_service.select_connector(
@@ -339,7 +360,10 @@ async def run_query(request: QueryRequest) -> QueryResponse:
         role_assignments=role_assignments,
         router_strategy=resolved.router_strategy,
         matched_profile=resolved.matched_profile,
+        session_id=session_id,
     )
+    if result:
+        await session_store.append(session_id or "", request.query, result)
     if cache is not None:
         await cache.set(cache_payload, response.model_dump(mode="json"))
     return response

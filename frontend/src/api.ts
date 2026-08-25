@@ -72,6 +72,7 @@ export async function streamQuery(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       query: options.query,
+      ...(options.sessionId ? { session_id: options.sessionId } : {}),
       model_config: {
         ...(options.connectors?.length ? { connectors: options.connectors } : {}),
         ...(options.profile ? { profile: options.profile } : {}),

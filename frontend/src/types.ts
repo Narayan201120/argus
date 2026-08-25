@@ -54,6 +54,7 @@ export interface QueryEnvelope {
 
 export interface QueryOptions {
   query: string
+  sessionId?: string
   connectors?: string[]
   profile?: string
   router_strategy?: string

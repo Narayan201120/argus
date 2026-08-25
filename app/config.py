@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     speech_timeout_s: int = 60
     speech_max_chars: int = 1500
 
+    # Conversation memory (working memory, Redis-backed)
+    memory_enabled: bool = True
+    memory_max_turns: int = 12
+    memory_inject_turns: int = 4
+    memory_ttl_s: int = 86400
+    memory_char_cap: int = 12000
+
     # Tracing (opt-in OpenTelemetry)
     tracing_enabled: bool = False
     tracing_exporter: str = "console"

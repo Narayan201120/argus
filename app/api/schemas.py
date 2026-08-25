@@ -39,6 +39,7 @@ class ConnectorConfigRequest(BaseModel):
 
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=32000)
+    session_id: str | None = Field(default=None, max_length=128)
     model_config_: ConnectorConfigRequest = Field(
         default_factory=ConnectorConfigRequest,
         alias="model_config",
@@ -77,6 +78,7 @@ class QueryResponse(BaseModel):
     cache_hit: bool = False
     router_strategy: str | None = None
     matched_profile: str | None = None
+    session_id: str | None = None
 
 
 class ConnectorProfile(BaseModel):
@@ -118,6 +120,18 @@ class HealthResponse(BaseModel):
     connectors: list[ConnectorHealthStatus]
     redis: Literal["ok", "unavailable", "disabled"] = "disabled"
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class SessionTurn(BaseModel):
+    q: str
+    a: str
+    ts: float
+
+
+class SessionDetail(BaseModel):
+    session_id: str
+    turns: list[SessionTurn]
+    enabled: bool
 
 
 class TranscriptionResponse(BaseModel):

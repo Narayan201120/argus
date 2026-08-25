@@ -32,6 +32,10 @@ class SharedTaskState(BaseModel):
     constraints: list[str] = Field(default_factory=list)
     global_rules: list[str] = Field(default_factory=list)
     expected_final_output: str
+    # Working memory: bounded transcript of prior exchanges in this
+    # session (None on stateless requests). Included in every role prompt
+    # via the standard shared-state dump.
+    conversation_history: str | None = None
 
     @field_validator("request_id", "original_query", "main_objective", "expected_final_output", mode="before")
     @classmethod

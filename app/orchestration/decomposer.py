@@ -36,12 +36,14 @@ def _derive_main_objective(query: str) -> str:
 def build_parallel_plan(
     query: str,
     request_id: str,
+    conversation_history: str | None = None,
 ) -> OrchestrationPlan:
     normalized_query = _clean_query_text(query)
 
     shared_state = SharedTaskState(
         request_id=request_id,
         original_query=normalized_query,
+        conversation_history=conversation_history or None,
         main_objective=_derive_main_objective(normalized_query),
         task_context=[
             "Parallel orchestration: researcher and analyzer run from the same frozen task snapshot.",
