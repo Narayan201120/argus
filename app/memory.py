@@ -14,6 +14,7 @@ import time
 from typing import Any
 
 from app.config import settings
+from app.metrics import MEMORY_TRUNCATED_ANSWERS
 from app.rediskit import holder
 from app.utils.logger import get_logger
 
@@ -26,7 +27,12 @@ def _key(session_id: str) -> str:
 
 class SessionStore:
     async def append(self, session_id: str, question: str, answer: str) -> None:
-        """Store one exchange, rolling off turns beyond MEMORY_MAX_TURNS."""
+        """Store one exchange, rolling off turns beyond MEMORY_MAX_TURNS.
+
+        Answers longer than MEMORY_MAX_ANSWER_CHARS are stored truncated:
+        the user still sees the full answer; memory keeps its opening so
+        one giant reply cannot evict the rest of the conversation.
+        """
         if (
             not settings.memory_enabled
             or not session_id
@@ -40,7 +46,11 @@ class SessionStore:
         try:
             raw = await client.get(_key(session_id))
             turns: list[dict[str, Any]] = json.loads(raw) if raw else []
-            turns.append({"q": question, "a": answer, "ts": time.time()})
+            stored_answer = answer
+            if len(stored_answer) > settings.memory_max_answer_chars:
+                stored_answer = stored_answer[: settings.memory_max_answer_chars]
+                MEMORY_TRUNCATED_ANSWERS.inc()
+            turns.append({"q": question, "a": stored_answer, "ts": time.time()})
             turns = turns[-max(settings.memory_max_turns, 1):]
             await client.set(_key(session_id), json.dumps(turns))
             await client.expire(_key(session_id), max(settings.memory_ttl_s, 60))
@@ -76,16 +86,19 @@ class SessionStore:
 def format_history(turns: list[dict[str, Any]]) -> str | None:
     """Render turns into a bounded transcript for prompt injection.
 
-    Newest exchanges are kept preferentially when the character budget
-    (MEMORY_CHAR_CAP) would be exceeded. Returns None when empty.
+    The budget is expressed in tokens (MEMORY_TOKEN_BUDGET) and
+    approximated as x4 characters. Newest exchanges are kept
+    preferentially when the budget would be exceeded.
+    Returns None when empty.
     """
     if not turns:
         return None
+    char_budget = max(settings.memory_token_budget, 1) * 4
     kept: list[str] = []
     used = 0
     for turn in reversed(turns):
         block = f"User: {turn.get('q', '')}\nAssistant: {turn.get('a', '')}"
-        if used + len(block) > settings.memory_char_cap:
+        if used + len(block) > char_budget:
             break
         kept.insert(0, block)
         used += len(block)

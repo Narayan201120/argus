@@ -56,7 +56,10 @@ class Settings(BaseSettings):
     memory_max_turns: int = 12
     memory_inject_turns: int = 4
     memory_ttl_s: int = 86400
-    memory_char_cap: int = 12000
+    # Injection budget in tokens (approximated as x4 characters internally)
+    memory_token_budget: int = 3000
+    # Answers longer than this are stored truncated in history
+    memory_max_answer_chars: int = 1200
 
     # Tracing (opt-in OpenTelemetry)
     tracing_enabled: bool = False

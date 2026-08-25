@@ -68,8 +68,9 @@ async def test_fail_open_when_redis_absent(monkeypatch):
     assert await session_store.recent("x") == []
 
 
-def test_format_history_respects_char_cap(monkeypatch):
-    monkeypatch.setattr(settings, "memory_char_cap", 200)
+def test_format_history_respects_token_budget(monkeypatch):
+    # budget 50 tokens -> 200 char cap internally
+    monkeypatch.setattr(settings, "memory_token_budget", 50)
     turns = [
         {"q": f"question number {i} with padding text", "a": f"answer {i} also padded out", "ts": i}
         for i in range(5)
@@ -79,6 +80,30 @@ def test_format_history_respects_char_cap(monkeypatch):
     # newest kept preferentially; at least one oldest dropped
     assert "answer 4" in formatted
     assert "answer 0" not in formatted
+
+
+@pytest.mark.asyncio
+async def test_append_truncates_long_answers_and_counts(fake_redis, monkeypatch):
+    from prometheus_client import REGISTRY
+
+    monkeypatch.setattr(settings, "memory_max_answer_chars", 20)
+
+    before = REGISTRY.get_sample_value("argus_memory_truncated_answers_total") or 0.0
+    await session_store.append("trunc", "big question", "A" * 500)
+    after = REGISTRY.get_sample_value("argus_memory_truncated_answers_total")
+
+    assert after is not None and after > before
+
+    raw = json.loads(await fake_redis.get(_key("trunc")))
+    assert len(raw[0]["a"]) == 20
+    assert raw[0]["a"] == "A" * 20
+
+
+@pytest.mark.asyncio
+async def test_append_keeps_short_answers_intact(fake_redis):
+    await session_store.append("short", "q", "exact answer")
+    raw = json.loads(await fake_redis.get(_key("short")))
+    assert raw[0]["a"] == "exact answer"
 
 
 # ── API integration ─────────────────────────────────────────────────────────

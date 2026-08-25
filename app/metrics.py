@@ -85,6 +85,10 @@ SPEECH_LATENCY = Histogram(
     "argus_speech_latency_seconds",
     "End-to-end speech synthesis duration in seconds.",
 )
+MEMORY_TRUNCATED_ANSWERS = Counter(
+    "argus_memory_truncated_answers_total",
+    "Answers stored shorter than generated because they exceeded the memory per-answer cap.",
+)
 
 
 def record_role_outcome(role: str, connector_id: str, status: str, latency_ms: int) -> None:
