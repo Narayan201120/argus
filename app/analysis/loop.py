@@ -492,7 +492,11 @@ async def _run_loop(investigation_id: str) -> None:
             await _publish_terminal_if_row_terminal()
             return
 
-        planned = [("radar_search", gap.radar_query), ("rag_retrieve", gap.rag_query)]
+        planned = [
+            ("radar_search", gap.radar_query),
+            ("rag_retrieve", gap.rag_query),
+            ("web_search", gap.web_query),
+        ]
         pre_round_evidence = _evidence_ids(grown)
         await _emit(
             investigation_id,

@@ -181,10 +181,15 @@ class InvestigationManager:
     async def record_tool_call(self, investigation_id: str) -> Investigation | None:
         return await self._record_use(investigation_id, tool_call=True)
 
+    async def record_web_call(self, investigation_id: str) -> Investigation | None:
+        return await self._record_use(investigation_id, tool_call=True, web_call=True)
+
     async def record_iteration(self, investigation_id: str) -> Investigation | None:
         return await self._record_use(investigation_id, tool_call=False)
 
-    async def _record_use(self, investigation_id: str, *, tool_call: bool) -> Investigation | None:
+    async def _record_use(
+        self, investigation_id: str, *, tool_call: bool, web_call: bool = False
+    ) -> Investigation | None:
         inv = await self._store.load(investigation_id)
         if inv is None:
             return None
@@ -192,6 +197,8 @@ class InvestigationManager:
             return inv
         if tool_call:
             inv.usage.tool_calls_used += 1
+            if web_call:
+                inv.usage.web_calls_used += 1
         else:
             inv.usage.iterations_used += 1
         inv.updated_at = time.time()

@@ -41,7 +41,8 @@ CRITIQUE_PROMPT = (
 GAP_PROMPT = (
     "You are the ARGUS gap worker. Judge evidence sufficiency and propose "
     "follow-up tool queries. Return only one JSON object, no prose: "
-    '{"sufficient": bool, "radar_query": str, "rag_query": str, "rationale": str}.'
+    '{"sufficient": bool, "radar_query": str, "rag_query": str, "web_query": str, "rationale": str}. '
+    "Provide a web follow-up query in web_query, or empty string when web search is not needed."
 )
 
 WORKER_CONFIGS: dict[str, ConnectorConfig] = {
@@ -79,6 +80,7 @@ class GapOutput(BaseModel):
     sufficient: bool
     radar_query: str = ""
     rag_query: str = ""
+    web_query: str = ""
     rationale: str = ""
 
 

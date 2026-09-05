@@ -11,6 +11,9 @@ pydantic-settings>=2.3.0
 # Async HTTP
 httpx>=0.27.0
 
+# Web content extraction (P4-5 web_fetch; sync API run via to_thread)
+trafilatura>=2.0.0,<3
+
 # Caching / rate limiting
 redis>=5.0.4
 

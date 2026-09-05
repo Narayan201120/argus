@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     rag_service_pass: str | None = None
     tool_timeout_s: int = 30
     web_tools_enabled: bool = False
+    tavily_api_key: str | None = None
+    max_web_calls: int = 4
 
     # Analysis workers (Phase 4 P4-2, DEC-053; empty = first available connector)
     analysis_connector_id: str = ""

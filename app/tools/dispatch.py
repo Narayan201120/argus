@@ -170,6 +170,7 @@ async def run_tool_round(
     registry = build_tool_registry()
 
     reserved: list[tuple[BaseTool, str]] = []
+    web_calls_used = inv.usage.web_calls_used
     for name, query in planned:
         if not query:
             TOOL_CALLS.labels(tool=name, status="skipped").inc()
@@ -195,7 +196,21 @@ async def run_tool_round(
         if not tool.enabled:
             TOOL_CALLS.labels(tool=tool.name, status="disabled").inc()
             continue
-        row = await manager.record_tool_call(investigation_id)
+        is_web = name.startswith("web_")
+        if is_web and web_calls_used >= settings.max_web_calls:
+            TOOL_CALLS.labels(tool=name, status="capped").inc()
+            logger.info(
+                {
+                    "message": "Tool round: web cap reached, skipping",
+                    "investigation_id": investigation_id,
+                    "tool": name,
+                }
+            )
+            continue
+        if is_web:
+            row = await manager.record_web_call(investigation_id)
+        else:
+            row = await manager.record_tool_call(investigation_id)
         if row is None:
             logger.warning(
                 {
@@ -208,6 +223,8 @@ async def run_tool_round(
             # Budget exhausted (or a raced cancel/expiry ended the run); the
             # recorded terminal state stands, so stop dispatching.
             return (0, len(reserved) > 0, True)
+        if is_web:
+            web_calls_used = row.usage.web_calls_used
         reserved.append((tool, query))
 
     results: dict[str, ToolResult] = {}

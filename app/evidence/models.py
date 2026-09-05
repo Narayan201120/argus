@@ -69,6 +69,7 @@ class BudgetLimits(BaseModel):
 class BudgetUsage(BaseModel):
     iterations_used: int = Field(default=0, ge=0)
     tool_calls_used: int = Field(default=0, ge=0)
+    web_calls_used: int = Field(default=0, ge=0)
 
 
 class Investigation(BaseModel):

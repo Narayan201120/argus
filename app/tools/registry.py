@@ -3,7 +3,7 @@
 from app.tools.base import BaseTool
 from app.tools.radar import radar_search_tool, radar_similar_tool
 from app.tools.rag import rag_retrieve_tool
-from app.tools.stubs import web_fetch_tool, web_search_tool
+from app.tools.web import web_fetch_tool, web_search_tool
 
 ALL_TOOLS: list[BaseTool] = [
     radar_search_tool,
