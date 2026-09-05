@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     investigation_max_wall_time_s: int = 120
     investigation_ttl_s: int = 604800
 
+    # Tool integrations (Phase 4 P4-1, DEC-053; all off unless configured)
+    radar_base_url: str = "http://localhost:8000"
+    radar_integration_enabled: bool = False
+    rag_base_url: str | None = None
+    rag_integration_enabled: bool = False
+    rag_service_user: str | None = None
+    rag_service_pass: str | None = None
+    tool_timeout_s: int = 30
+    web_tools_enabled: bool = False
+
     # Tracing (opt-in OpenTelemetry)
     tracing_enabled: bool = False
     tracing_exporter: str = "console"

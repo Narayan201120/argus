@@ -144,9 +144,9 @@ class InvestigationManager:
     def check_budgets(inv: Investigation) -> StatusReason | None:
         if time.time() >= inv.deadline_at:
             return StatusReason.WALL_CLOCK_LIMIT
-        if inv.usage.tool_calls_used >= inv.budgets.max_tool_calls:
+        if inv.usage.tool_calls_used > inv.budgets.max_tool_calls:
             return StatusReason.TOOL_CALL_LIMIT
-        if inv.usage.iterations_used >= inv.budgets.max_iterations:
+        if inv.usage.iterations_used > inv.budgets.max_iterations:
             return StatusReason.ITERATION_LIMIT
         return None
 
@@ -273,6 +273,9 @@ class InvestigationManager:
                 )
         except asyncio.CancelledError:
             pass
+
+    def cancel_event(self, investigation_id: str) -> asyncio.Event:
+        return self._events.setdefault(investigation_id, asyncio.Event())
 
 
 manager = InvestigationManager()

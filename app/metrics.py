@@ -99,6 +99,22 @@ INVESTIGATIONS_TOTAL = Counter(
     "Investigation lifecycle events by event type.",
     ["event"],
 )
+TOOL_CALLS = Counter(
+    "argus_tool_calls_total",
+    "Investigation tool calls by tool name and outcome.",
+    ["tool", "status"],
+)
+TOOL_LATENCY = Histogram(
+    "argus_tool_latency_seconds",
+    "Tool call latency in seconds by tool name.",
+    ["tool"],
+    buckets=(0.5, 1, 2.5, 5, 10, 30, 60, 120),
+)
+FIRST_EVIDENCE_LATENCY = Histogram(
+    "argus_time_to_first_evidence_seconds",
+    "Seconds from investigation creation to first evidence write.",
+    buckets=(1, 2.5, 5, 10, 30, 60, 120),
+)
 
 
 def record_role_outcome(role: str, connector_id: str, status: str, latency_ms: int) -> None:

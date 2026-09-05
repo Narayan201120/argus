@@ -150,6 +150,9 @@ async def test_tool_call_budget_exhausted(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(settings, "investigation_max_tool_calls", 1)
     inv = await manager.create("tool budget query", "local")
     try:
+        first = await manager.record_tool_call(inv.id)
+        assert first is not None
+        assert first.status == InvestigationStatus.PLANNED  # budget of 1 allows 1 call
         updated = await manager.record_tool_call(inv.id)
         assert updated is not None
         assert updated.status == InvestigationStatus.BUDGET_EXHAUSTED
@@ -162,6 +165,9 @@ async def test_iteration_budget_exhausted(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(settings, "investigation_max_iterations", 1)
     inv = await manager.create("iteration budget query", "local")
     try:
+        first = await manager.record_iteration(inv.id)
+        assert first is not None
+        assert first.status == InvestigationStatus.PLANNED  # budget of 1 allows 1 round
         updated = await manager.record_iteration(inv.id)
         assert updated is not None
         assert updated.status == InvestigationStatus.BUDGET_EXHAUSTED

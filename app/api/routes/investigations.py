@@ -1,6 +1,6 @@
 """Async investigation endpoints (P4-0 routes only, no business logic)."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from app.api.schemas import (
     BoardCounts,
@@ -10,16 +10,20 @@ from app.api.schemas import (
     InvestigationBoardResponse,
 )
 from app.investigations import manager
+from app.tools.dispatch import run_opening_round
 
 router = APIRouter()
 
 
 @router.post("/investigate", response_model=InvestigateCreated, status_code=202)
-async def start_investigation(request: InvestigateRequest) -> InvestigateCreated:
+async def start_investigation(
+    request: InvestigateRequest, background_tasks: BackgroundTasks
+) -> InvestigateCreated:
     try:
         investigation = await manager.create(request.query.strip(), request.user_id.strip() or "local")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    background_tasks.add_task(run_opening_round, investigation.id)
     return InvestigateCreated(
         investigation_id=investigation.id,
         user_id=investigation.user_id,
