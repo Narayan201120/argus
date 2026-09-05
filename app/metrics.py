@@ -115,6 +115,22 @@ FIRST_EVIDENCE_LATENCY = Histogram(
     "Seconds from investigation creation to first evidence write.",
     buckets=(1, 2.5, 5, 10, 30, 60, 120),
 )
+WORKER_CALLS = Counter(
+    "argus_worker_calls_total",
+    "Analysis worker executions by worker name and outcome.",
+    ["worker", "status"],
+)
+WORKER_LATENCY = Histogram(
+    "argus_worker_latency_seconds",
+    "Analysis worker latency in seconds by worker name.",
+    ["worker"],
+    buckets=(1, 2.5, 5, 10, 30, 60, 120, 300),
+)
+LOOP_STOPS = Counter(
+    "argus_loop_stops_total",
+    "Investigation loop endings by stop reason.",
+    ["reason"],
+)
 
 
 def record_role_outcome(role: str, connector_id: str, status: str, latency_ms: int) -> None:

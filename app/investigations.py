@@ -23,6 +23,7 @@ from app.evidence.models import (
     BudgetLimits,
     BudgetUsage,
     Claim,
+    ClaimStatus,
     Evidence,
     Investigation,
     InvestigationStatus,
@@ -219,6 +220,27 @@ class InvestigationManager:
         inv.updated_at = time.time()
         await self._store.save(inv, settings.investigation_ttl_s)
         return inv
+
+    async def set_claim_status(
+        self, investigation_id: str, claim_id: str, status: ClaimStatus
+    ) -> Investigation | None:
+        """Set one claim's status. None if investigation missing.
+
+        Raises ValueError when the investigation is terminal or when no
+        claim carries claim_id.
+        """
+        inv = await self._store.load(investigation_id)
+        if inv is None:
+            return None
+        if inv.status in TERMINAL:
+            raise ValueError(f"Cannot set claim status on terminal investigation {investigation_id}")
+        for claim in inv.board.claims:
+            if claim.id == claim_id:
+                claim.status = status
+                inv.updated_at = time.time()
+                await self._store.save(inv, settings.investigation_ttl_s)
+                return inv
+        raise ValueError(f"Unknown claim {claim_id} for investigation {investigation_id}")
 
     async def cancel(self, investigation_id: str) -> Investigation | None:
         inv = await self._store.load(investigation_id)

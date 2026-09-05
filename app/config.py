@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     tool_timeout_s: int = 30
     web_tools_enabled: bool = False
 
+    # Analysis workers (Phase 4 P4-2, DEC-053; empty = first available connector)
+    analysis_connector_id: str = ""
+
     # Tracing (opt-in OpenTelemetry)
     tracing_enabled: bool = False
     tracing_exporter: str = "console"

@@ -6,6 +6,10 @@ surviving results onto the evidence board with source_ref dedupe.
 
 Background-runner contract: run_opening_round never raises; every storage or
 transition failure is logged and the runner returns.
+
+P4-2 note: the generic round body lives in run_tool_round so the adaptive
+loop can reuse it with per-tool gap queries. _run_opening_round keeps the
+original outcome mapping (park vs PROVIDER_FAILURE) on top of it.
 """
 
 import asyncio
@@ -91,6 +95,176 @@ async def _race_tools(
         await asyncio.gather(*leftovers, return_exceptions=True)
 
 
+async def _race_planned(
+    investigation_id: str,
+    planned_tools: list[tuple[BaseTool, str]],
+    deadline_at: float,
+) -> dict[str, ToolResult] | None:
+    """Race reserved tools that each carry their own query string.
+
+    Same cancel/deadline semantics as _race_tools; kept separate so the
+    opening-round path above stays byte-identical.
+    """
+    event = manager.cancel_event(investigation_id)
+    pending: dict[asyncio.Task[ToolResult], BaseTool] = {
+        asyncio.ensure_future(_run_one(tool, query)): tool for tool, query in planned_tools
+    }
+    watcher: asyncio.Task[bool] = asyncio.ensure_future(event.wait())
+    results: dict[str, ToolResult] = {}
+    try:
+        while pending:
+            remaining = max(0.0, deadline_at - time.time())
+            wait_for: set[asyncio.Task[Any]] = set(pending)
+            wait_for.add(watcher)
+            done, _ = await asyncio.wait(
+                wait_for, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+            )
+            if watcher in done or event.is_set():
+                return None
+            if not done:
+                return None
+            for task in done:
+                tool = pending.pop(task)
+                results[tool.name] = task.result()
+        return results
+    finally:
+        if not watcher.done():
+            watcher.cancel()
+        for task in pending:
+            task.cancel()
+        leftovers: list[asyncio.Task[Any]] = [watcher, *pending]
+        await asyncio.gather(*leftovers, return_exceptions=True)
+
+
+async def run_tool_round(
+    investigation_id: str, planned: list[tuple[str, str]]
+) -> tuple[int, bool, bool]:
+    """Run one generic tool round with per-tool queries.
+
+    Args:
+        investigation_id: Target investigation (caller owns GATHERING entry).
+        planned: Ordered (tool_name, query) pairs. An empty query string is
+            skipped without spending budget; it emits TOOL_CALLS status
+            "skipped" and never touches the tool.
+
+    Returns:
+        (written, attempted, stopped): written is this round's evidence
+        writes; attempted is True when at least one tool was reserved;
+        stopped is True when a cancel/deadline/terminal raced (caller must
+        return silently; the terminal state is owned elsewhere).
+    """
+    inv = await manager.get(investigation_id)
+    if inv is None:
+        logger.warning(
+            {"message": "Tool round: investigation not found", "investigation_id": investigation_id}
+        )
+        return (0, False, True)
+    if inv.status in TERMINAL:
+        return (0, False, True)
+
+    deadline_at = inv.deadline_at
+    created_at = inv.created_at
+    pre_existing_refs = {e.source_ref for e in inv.board.evidence}
+    pre_existing_count = len(inv.board.evidence)
+
+    registry = build_tool_registry()
+
+    reserved: list[tuple[BaseTool, str]] = []
+    for name, query in planned:
+        if not query:
+            TOOL_CALLS.labels(tool=name, status="skipped").inc()
+            logger.info(
+                {
+                    "message": "Tool round: empty query skipped",
+                    "investigation_id": investigation_id,
+                    "tool": name,
+                }
+            )
+            continue
+        tool = registry.get(name)
+        if tool is None:
+            logger.warning(
+                {
+                    "message": "Tool round: tool missing from registry",
+                    "investigation_id": investigation_id,
+                    "tool": name,
+                }
+            )
+            TOOL_CALLS.labels(tool=name, status="missing").inc()
+            continue
+        if not tool.enabled:
+            TOOL_CALLS.labels(tool=tool.name, status="disabled").inc()
+            continue
+        row = await manager.record_tool_call(investigation_id)
+        if row is None:
+            logger.warning(
+                {
+                    "message": "Tool round: investigation vanished during budget reserve",
+                    "investigation_id": investigation_id,
+                }
+            )
+            return (0, len(reserved) > 0, True)
+        if row.status in TERMINAL or row.status_reason is not None:
+            # Budget exhausted (or a raced cancel/expiry ended the run); the
+            # recorded terminal state stands, so stop dispatching.
+            return (0, len(reserved) > 0, True)
+        reserved.append((tool, query))
+
+    results: dict[str, ToolResult] = {}
+    if reserved:
+        raced = await _race_planned(investigation_id, reserved, deadline_at)
+        if raced is None:
+            return (0, len(reserved) > 0, True)
+        results = raced
+
+    if manager.cancel_event(investigation_id).is_set():
+        return (0, len(reserved) > 0, True)
+
+    seen = set(pre_existing_refs)
+    written = 0
+    for tool, _query in reserved:
+        result = results.get(tool.name)
+        if result is None:
+            continue  # Every reserved tool produces a result; stay total regardless.
+        status = "ok" if result.ok else ("timeout" if result.error == "timeout" else "error")
+        TOOL_CALLS.labels(tool=tool.name, status=status).inc()
+        TOOL_LATENCY.labels(tool=tool.name).observe(result.latency_ms / 1000)
+        if not result.ok:
+            continue
+        for item in result.items:
+            if item.source_ref in seen:
+                TOOL_CALLS.labels(tool=tool.name, status="deduped").inc()
+                continue
+            seen.add(item.source_ref)
+            now = time.time()
+            evidence = Evidence(
+                id=new_evidence_id(),
+                investigation_id=investigation_id,
+                source_ref=item.source_ref,
+                content=item.content,
+                type=item.type,
+                confidence=item.confidence,
+                provenance=dict(item.provenance),
+                created_at=now,
+            )
+            try:
+                await manager.add_evidence(investigation_id, evidence)
+            except ValueError as exc:
+                logger.warning(
+                    {
+                        "message": "Tool round: board closed mid-write",
+                        "investigation_id": investigation_id,
+                        "tool": tool.name,
+                        "error": str(exc),
+                    }
+                )
+                return (written, True, True)
+            written += 1
+            if pre_existing_count == 0 and written == 1:
+                FIRST_EVIDENCE_LATENCY.observe(now - created_at)
+    return (written, len(reserved) > 0, False)
+
+
 async def run_opening_round(investigation_id: str) -> None:
     """Run baseline round zero for one investigation. Never raises."""
     try:
@@ -135,100 +309,16 @@ async def _run_opening_round(investigation_id: str) -> None:
         inv = moved
 
     query = inv.query
-    deadline_at = inv.deadline_at
-    created_at = inv.created_at
-    pre_existing_refs = {e.source_ref for e in inv.board.evidence}
     pre_existing_count = len(inv.board.evidence)
 
-    registry = build_tool_registry()
-
-    reserved: list[BaseTool] = []
-    for name in BASELINE_ROUND_ZERO:
-        tool = registry.get(name)
-        if tool is None:
-            logger.warning(
-                {
-                    "message": "Opening round: baseline tool missing from registry",
-                    "investigation_id": investigation_id,
-                    "tool": name,
-                }
-            )
-            TOOL_CALLS.labels(tool=name, status="missing").inc()
-            continue
-        if not tool.enabled:
-            TOOL_CALLS.labels(tool=tool.name, status="disabled").inc()
-            continue
-        row = await manager.record_tool_call(investigation_id)
-        if row is None:
-            logger.warning(
-                {
-                    "message": "Opening round: investigation vanished during budget reserve",
-                    "investigation_id": investigation_id,
-                }
-            )
-            return
-        if row.status in TERMINAL or row.status_reason is not None:
-            # Budget exhausted (or a raced cancel/expiry ended the run); the
-            # recorded terminal state stands, so stop dispatching.
-            return
-        reserved.append(tool)
-
-    results: dict[str, ToolResult] = {}
-    if reserved:
-        raced = await _race_tools(investigation_id, reserved, query, deadline_at)
-        if raced is None:
-            return
-        results = raced
-
-    if manager.cancel_event(investigation_id).is_set():
+    planned = [(name, query) for name in BASELINE_ROUND_ZERO]
+    written, attempted, stopped = await run_tool_round(investigation_id, planned)
+    if stopped:
         return
-
-    seen = set(pre_existing_refs)
-    written = 0
-    for tool in reserved:
-        result = results.get(tool.name)
-        if result is None:
-            continue  # Every reserved tool produces a result; stay total regardless.
-        status = "ok" if result.ok else ("timeout" if result.error == "timeout" else "error")
-        TOOL_CALLS.labels(tool=tool.name, status=status).inc()
-        TOOL_LATENCY.labels(tool=tool.name).observe(result.latency_ms / 1000)
-        if not result.ok:
-            continue
-        for item in result.items:
-            if item.source_ref in seen:
-                TOOL_CALLS.labels(tool=tool.name, status="deduped").inc()
-                continue
-            seen.add(item.source_ref)
-            now = time.time()
-            evidence = Evidence(
-                id=new_evidence_id(),
-                investigation_id=investigation_id,
-                source_ref=item.source_ref,
-                content=item.content,
-                type=item.type,
-                confidence=item.confidence,
-                provenance=dict(item.provenance),
-                created_at=now,
-            )
-            try:
-                await manager.add_evidence(investigation_id, evidence)
-            except ValueError as exc:
-                logger.warning(
-                    {
-                        "message": "Opening round: board closed mid-write",
-                        "investigation_id": investigation_id,
-                        "tool": tool.name,
-                        "error": str(exc),
-                    }
-                )
-                return
-            written += 1
-            if pre_existing_count == 0 and written == 1:
-                FIRST_EVIDENCE_LATENCY.observe(now - created_at)
 
     if written > 0 or pre_existing_count > 0:
         return  # Park in GATHERING with evidence on the board.
-    if not reserved:
+    if not attempted:
         return  # Nothing was ever enabled/attempted; park in GATHERING with an empty board.
     try:
         await manager.transition(

@@ -1,5 +1,7 @@
 import pytest
 
+from app.analysis import workers as analysis_workers
+from app.analysis.workers import AnalysisOutput, CritiqueOutput, GapOutput
 from app.config import settings
 from app.connectors.base import BaseConnector, ConnectorResponse, ConnectorStatus, TokenUsage
 
@@ -10,6 +12,26 @@ def _no_live_embeddings(monkeypatch):
     APIs even when local .env has provider keys. Embedding-specific tests
     override this by setting the provider themselves."""
     monkeypatch.setattr(settings, "router_embedding_provider", "none")
+
+
+@pytest.fixture(autouse=True)
+def _no_live_analysis_workers(monkeypatch):
+    """Mock-only discipline (DEC-008): the investigation loop's LLM workers
+    never fire in tests, even when local .env has provider keys. Scripted
+    defaults: no claims, no challenges, sufficient immediately. Tests needing
+    specific worker behavior monkeypatch over this fixture."""
+    async def _analyze(board_text: str, query: str) -> AnalysisOutput:
+        return AnalysisOutput(claims=[])
+
+    async def _critique(board_text: str, query: str) -> CritiqueOutput:
+        return CritiqueOutput(challenges=[])
+
+    async def _assess(board_text: str, query: str) -> GapOutput:
+        return GapOutput(sufficient=True, rationale="test stub: sufficient")
+
+    monkeypatch.setattr(analysis_workers, "analyze_board", _analyze)
+    monkeypatch.setattr(analysis_workers, "critique_board", _critique)
+    monkeypatch.setattr(analysis_workers, "assess_gaps", _assess)
 
 
 class MockConnector(BaseConnector):
