@@ -156,10 +156,20 @@ BUS_DROPS = Counter(
     "Investigation bus events dropped per slow subscriber.",
     ["event"],
 )
+INVESTIGATION_COST = Histogram(
+    "argus_investigation_cost_usd",
+    "Estimated spend accumulated per investigation cost event.",
+    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0),
+)
 PROXY_CALLS = Counter(
     "argus_proxy_calls_total",
     "Workspace proxy calls by service and outcome.",
     ["service", "status"],
+)
+INVESTIGATION_FEEDBACK_TOTAL = Counter(
+    "argus_investigation_feedback_total",
+    "Investigation report feedback ratings received, by rating value.",
+    ["rating"],
 )
 
 

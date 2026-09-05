@@ -7,6 +7,7 @@ from app.api.schemas import (
     RoutingProfileOut,
     RoutingStrategyOut,
 )
+from app.connectors.availability import consecutive_auth_failures, is_demoted
 from app.connectors.registry import registry
 from app.orchestration.binding import ROUTER_STRATEGIES, binding_service
 
@@ -21,6 +22,8 @@ async def list_models() -> ModelsResponse:
             display_name=c.display_name,
             capabilities=c.capabilities,
             is_available=c.is_available,
+            demoted=is_demoted(c.connector_id),
+            consecutive_auth_failures=consecutive_auth_failures(c.connector_id),
         )
         for c in registry.all()
     ]

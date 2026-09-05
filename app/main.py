@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from starlette.responses import Response
 
 from app.api.routes import audio as audio_router
 from app.api.routes import auth as auth_router
@@ -24,6 +25,7 @@ from app.connectors.gemini import GeminiConnector
 from app.connectors.mistral import MistralConnector
 from app.connectors.openai import OpenAIConnector
 from app.connectors.registry import registry
+from app.investigations import manager
 from app.metrics import PrometheusMiddleware
 from app.metrics import router as metrics_router
 from app.ratelimit import RateLimitMiddleware
@@ -50,6 +52,15 @@ async def lifespan(app: FastAPI):
 
     holder.client = await connect_redis()
     holder.cache = ResponseCache(holder.client) if holder.client else None
+
+    result = await manager.sweep_expired()
+    logger.info(
+        {
+            "message": "Investigation sweep on startup",
+            "expired": result["expired"],
+            "rehydrated": result["rehydrated"],
+        }
+    )
 
     yield
 
@@ -96,7 +107,16 @@ async def meta():
         "version": settings.app_version,
         "status": "operational",
         "docs": "/docs",
+        "workspace": {
+            "radar": settings.workspace_radar_enabled,
+            "rag": settings.workspace_rag_enabled,
+        },
     }
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> Response:
+    return Response(status_code=204)
 
 
 # Serve the built React app when it exists (bun run build inside frontend/).

@@ -17,6 +17,7 @@ import time
 from typing import Any
 
 from app.config import settings
+from app.costs import web_fetch_cost, web_search_cost
 from app.evidence.models import Evidence, InvestigationStatus, StatusReason
 from app.investigations import TERMINAL, manager, new_evidence_id
 from app.metrics import FIRST_EVIDENCE_LATENCY, TOOL_CALLS, TOOL_LATENCY
@@ -225,6 +226,12 @@ async def run_tool_round(
             return (0, len(reserved) > 0, True)
         if is_web:
             web_calls_used = row.usage.web_calls_used
+            amount = web_fetch_cost() if name.startswith("web_fetch") else web_search_cost()
+            cost_row = await manager.add_cost(investigation_id, amount)
+            if cost_row is None:
+                return (0, len(reserved) > 0, True)
+            if cost_row.status in TERMINAL or cost_row.status_reason is not None:
+                return (0, len(reserved) > 0, True)
         reserved.append((tool, query))
 
     results: dict[str, ToolResult] = {}

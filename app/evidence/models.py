@@ -26,6 +26,7 @@ class StatusReason(str, Enum):  # noqa: UP042 - contract mandates (str, Enum)
     PROVIDER_FAILURE = "provider_failure"
     CANCELLED = "cancelled"
     SUFFICIENT_EVIDENCE = "sufficient_evidence"
+    COST_LIMIT = "cost_limit"
 
 
 class ClaimStatus(str, Enum):  # noqa: UP042 - contract mandates (str, Enum)
@@ -70,6 +71,7 @@ class BudgetUsage(BaseModel):
     iterations_used: int = Field(default=0, ge=0)
     tool_calls_used: int = Field(default=0, ge=0)
     web_calls_used: int = Field(default=0, ge=0)
+    cost_usd: float = Field(default=0.0, ge=0.0)
 
 
 class Investigation(BaseModel):

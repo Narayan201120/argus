@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # App
     app_name: str = "ARGUS"
-    app_version: str = "0.4.0"
+    app_version: str = "0.5.0"
     debug: bool = False
 
     # Redis
@@ -78,6 +78,25 @@ class Settings(BaseSettings):
     web_tools_enabled: bool = False
     tavily_api_key: str | None = None
     max_web_calls: int = 4
+
+    # Cost budget (Phase 4 P4-5b; estimates only, real billing lives in provider consoles)
+    investigation_max_cost_usd: float = 0.50
+    cost_usd_per_1k_input_tokens: dict[str, float] = {
+        "gemini": 0.0001,
+        "openai": 0.0025,
+        "claude": 0.003,
+        "mistral": 0.0027,
+        "default": 0.001,
+    }
+    cost_usd_per_1k_output_tokens: dict[str, float] = {
+        "gemini": 0.0004,
+        "openai": 0.01,
+        "claude": 0.015,
+        "mistral": 0.0081,
+        "default": 0.003,
+    }
+    cost_usd_per_web_search: float = 0.01
+    cost_usd_per_web_fetch: float = 0.0
 
     # Analysis workers (Phase 4 P4-2, DEC-053; empty = first available connector)
     analysis_connector_id: str = ""

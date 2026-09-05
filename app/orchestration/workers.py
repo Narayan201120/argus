@@ -5,6 +5,11 @@ from typing import Generic, TypeVar
 
 from pydantic import BaseModel
 
+from app.connectors.availability import (
+    is_auth_failure,
+    record_auth_failure,
+    record_success,
+)
 from app.connectors.base import (
     BaseConnector,
     ConnectorConfig,
@@ -143,7 +148,15 @@ async def run_connector_query(
     direct-path provider failover across the preference chain, parallel
     role status propagation, and UI recovery actions.
     """
-    return await connector.query(prompt, sub_query, config)
+    response = await connector.query(prompt, sub_query, config)
+    try:
+        if response.status == ConnectorStatus.SUCCESS:
+            record_success(connector.connector_id)
+        elif is_auth_failure(response.status.value, response.error):
+            record_auth_failure(connector.connector_id)
+    except Exception as exc:  # noqa: BLE001 - tracking must never fail requests
+        logger.warning({"message": "Availability tracking failed (ignored)", "error": str(exc)})
+    return response
 
 
 def _parse_role_result(raw: str, result_model: type[ResultT]) -> ResultT:

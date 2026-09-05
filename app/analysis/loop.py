@@ -55,6 +55,7 @@ Seams (monkeypatch targets for tests):
 """
 
 import asyncio
+import inspect
 import time
 from collections.abc import Awaitable
 from typing import Any, TypeVar
@@ -89,6 +90,23 @@ def _stop(reason: str, investigation_id: str) -> None:
     logger.info(
         {"message": "Investigation loop stopped", "investigation_id": investigation_id, "reason": reason}
     )
+
+
+def _worker_kwargs(fn: object, investigation_id: str) -> dict[str, str]:
+    """investigation_id kwarg only when the worker accepts it.
+
+    Keeps 2-arg test fakes working: the real workers take a keyword-only
+    investigation_id, older fakes take (board_text, query) only.
+    """
+    try:
+        params = inspect.signature(fn).parameters  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return {}
+    if "investigation_id" in params:
+        return {"investigation_id": investigation_id}
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return {"investigation_id": investigation_id}
+    return {}
 
 
 async def _guard(
@@ -355,7 +373,9 @@ async def _run_loop(investigation_id: str) -> None:
         query = cur.query
 
         analysis = await _guard(
-            workers_module.analyze_board(board_text, query),
+            workers_module.analyze_board(
+                board_text, query, **_worker_kwargs(workers_module.analyze_board, investigation_id)
+            ),
             investigation_id=investigation_id,
             worker="analysis",
         )
@@ -363,7 +383,9 @@ async def _run_loop(investigation_id: str) -> None:
             await asyncio.sleep(0)  # Yield so cancel/supervisor can fire on hot mock spins.
             continue
         critique = await _guard(
-            workers_module.critique_board(board_text, query),
+            workers_module.critique_board(
+                board_text, query, **_worker_kwargs(workers_module.critique_board, investigation_id)
+            ),
             investigation_id=investigation_id,
             worker="critique",
         )
@@ -433,7 +455,9 @@ async def _run_loop(investigation_id: str) -> None:
         )
 
         gap = await _guard(
-            workers_module.assess_gaps(board_text, query),
+            workers_module.assess_gaps(
+                board_text, query, **_worker_kwargs(workers_module.assess_gaps, investigation_id)
+            ),
             investigation_id=investigation_id,
             worker="gap",
         )

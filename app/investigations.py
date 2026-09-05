@@ -30,7 +30,7 @@ from app.evidence.models import (
     StatusReason,
 )
 from app.evidence.store import EvidenceBoardStore
-from app.metrics import INVESTIGATIONS_TOTAL
+from app.metrics import INVESTIGATION_COST, INVESTIGATIONS_TOTAL
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -156,6 +156,10 @@ class InvestigationManager:
             return StatusReason.TOOL_CALL_LIMIT
         if inv.usage.iterations_used > inv.budgets.max_iterations:
             return StatusReason.ITERATION_LIMIT
+        # Cost check runs last. Cap <= 0 disables it.
+        cap = settings.investigation_max_cost_usd
+        if cap > 0 and inv.usage.cost_usd > cap:
+            return StatusReason.COST_LIMIT
         return None
 
     async def transition(
@@ -186,6 +190,34 @@ class InvestigationManager:
 
     async def record_iteration(self, investigation_id: str) -> Investigation | None:
         return await self._record_use(investigation_id, tool_call=False)
+
+    async def add_cost(self, investigation_id: str, amount: float) -> Investigation | None:
+        """Accumulate estimated USD spend; trip to BUDGET_EXHAUSTED on cap breach.
+
+        None when the investigation is missing. Terminal rows come back
+        unchanged without accumulating. Otherwise adds max(amount, 0.0),
+        stamps updated_at, then applies the cost-trip check only: when
+        settings.investigation_max_cost_usd > 0 and usage.cost_usd exceeds
+        the cap, the row flips to BUDGET_EXHAUSTED / COST_LIMIT and the
+        supervisor is finished. A trip stops further spend; it never refunds
+        what was already accumulated. Cap <= 0 disables the check.
+        """
+        inv = await self._store.load(investigation_id)
+        if inv is None:
+            return None
+        if inv.status in TERMINAL:
+            return inv
+        inv.usage.cost_usd += max(float(amount), 0.0)
+        inv.updated_at = time.time()
+        INVESTIGATION_COST.observe(max(float(amount), 0.0))
+        cap = settings.investigation_max_cost_usd
+        if cap > 0 and inv.usage.cost_usd > cap:
+            inv.status = InvestigationStatus.BUDGET_EXHAUSTED
+            inv.status_reason = StatusReason.COST_LIMIT
+            inv.updated_at = time.time()
+            self._finish(investigation_id)
+        await self._store.save(inv, settings.investigation_ttl_s)
+        return inv
 
     async def _record_use(
         self, investigation_id: str, *, tool_call: bool, web_call: bool = False
@@ -312,6 +344,72 @@ class InvestigationManager:
 
     def cancel_event(self, investigation_id: str) -> asyncio.Event:
         return self._events.setdefault(investigation_id, asyncio.Event())
+
+    async def sweep_expired(self) -> dict[str, int]:
+        """Rehydrate supervisors after a restart; expire overdue rows. Never raises."""
+        expired = 0
+        rehydrated = 0
+        try:
+            rows = await self._store.list_recent(500)
+        except Exception as exc:  # noqa: BLE001 - sweep never raises
+            logger.warning(
+                {"message": "Investigation sweep list failed (ignored)", "error": str(exc)}
+            )
+            return {"expired": 0, "rehydrated": 0}
+        for row in rows:
+            try:
+                if row.status in TERMINAL:
+                    continue
+                task = self._supervisors.get(row.id)
+                if task is not None and not task.done():
+                    continue
+                if row.id in self._events:
+                    continue
+                current = await self._store.load(row.id)
+                if current is None or current.status in TERMINAL:
+                    continue
+                live = self._supervisors.get(current.id)
+                if live is not None and not live.done():
+                    continue
+                if current.id in self._events:
+                    continue
+                if time.time() >= current.deadline_at:
+                    current.status = InvestigationStatus.BUDGET_EXHAUSTED
+                    current.status_reason = StatusReason.WALL_CLOCK_LIMIT
+                    current.updated_at = time.time()
+                    await self._store.save(current, settings.investigation_ttl_s)
+                    expired += 1
+                else:
+                    self._events[current.id] = asyncio.Event()
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        logger.warning(
+                            {
+                                "message": "No running loop; skipping supervisor",
+                                "investigation_id": current.id,
+                            }
+                        )
+                        self._events.pop(current.id, None)
+                        continue
+                    sup = loop.create_task(self._supervise(current.id))
+                    self._supervisors[current.id] = sup
+
+                    def _done(_task: asyncio.Task[None], key: str = current.id) -> None:
+                        self._supervisors.pop(key, None)
+
+                    sup.add_done_callback(_done)
+                    rehydrated += 1
+            except Exception as exc:  # noqa: BLE001 - per-row isolation, never raises
+                logger.warning(
+                    {
+                        "message": "Investigation sweep row failed (ignored)",
+                        "error": str(exc),
+                        "investigation_id": getattr(row, "id", "?"),
+                    }
+                )
+                continue
+        return {"expired": expired, "rehydrated": rehydrated}
 
 
 manager = InvestigationManager()

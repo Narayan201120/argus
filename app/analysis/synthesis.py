@@ -8,6 +8,7 @@ selection helper from app/analysis/workers.py so synthesis stays independent
 of the analysis/critique/gap worker path.
 """
 
+import inspect
 import time
 from collections.abc import Awaitable, Callable
 
@@ -25,6 +26,7 @@ from app.connectors.base import (
     TokenUsage,
 )
 from app.connectors.registry import registry
+from app.costs import estimate_llm_cost
 from app.metrics import (
     SYNTHESIS_LATENCY,
     SYNTHESIS_TOTAL,
@@ -95,6 +97,36 @@ def _report_key(investigation_id: str) -> str:
 
 def _as_str(raw: str | bytes) -> str:
     return raw.decode("utf-8") if isinstance(raw, bytes) else raw
+
+
+def _accepts_investigation_id(fn: object) -> bool:
+    """True when fn takes an investigation_id keyword (or **kwargs).
+
+    Keeps 2-arg test fakes working: run_milestone passes the id only when
+    the (possibly monkeypatched) synthesize_board accepts it.
+    """
+    try:
+        params = inspect.signature(fn).parameters  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    if "investigation_id" in params:
+        return True
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
+async def _call_synthesize_board(
+    board_text: str,
+    query: str,
+    milestone: int,
+    emit: Callable[[str], Awaitable[None]] | None,
+    investigation_id: str,
+) -> str:
+    target = globals().get("synthesize_board", synthesize_board)
+    if _accepts_investigation_id(target):
+        return await target(
+            board_text, query, milestone, emit=emit, investigation_id=investigation_id
+        )
+    return await target(board_text, query, milestone, emit=emit)
 
 
 _records_adapter: TypeAdapter[list[SynthesisRecord]] = TypeAdapter(list[SynthesisRecord])
@@ -197,6 +229,8 @@ async def synthesize_board(
     query: str,
     milestone: int,
     emit: Callable[[str], Awaitable[None]] | None = None,
+    *,
+    investigation_id: str | None = None,
 ) -> str:
     """Render one milestone Markdown report, streaming deltas via emit.
 
@@ -309,6 +343,13 @@ async def synthesize_board(
             except Exception:
                 pass
         record_role_tokens(SYNTHESIS_WORKER, used.connector_id, response.token_usage)
+        if investigation_id and response.token_usage is not None:
+            amount = estimate_llm_cost(
+                used.connector_id,
+                response.token_usage.prompt_tokens,
+                response.token_usage.completion_tokens,
+            )
+            await investigations_module.manager.add_cost(investigation_id, amount)
         return full
     except SynthesisError:
         status = "error"
@@ -349,7 +390,9 @@ async def run_milestone(investigation_id: str, milestone: int, final: bool) -> s
             )
 
         try:
-            markdown = await synthesize_board(board_text, query, milestone, emit=_emit)
+            markdown = await _call_synthesize_board(
+                board_text, query, milestone, _emit, investigation_id
+            )
         except SynthesisError as exc:
             logger.warning(
                 {

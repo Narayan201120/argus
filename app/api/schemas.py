@@ -86,6 +86,8 @@ class ConnectorProfile(BaseModel):
     display_name: str
     capabilities: list[str]
     is_available: bool
+    demoted: bool = False
+    consecutive_auth_failures: int = 0
 
 
 class ModelsResponse(BaseModel):
@@ -248,3 +250,13 @@ class InvestigationSummary(BaseModel):
 
 class InvestigationListResponse(BaseModel):
     investigations: list[InvestigationSummary]
+
+
+class InvestigateFeedbackRequest(BaseModel):
+    rating: int = Field(..., ge=1, le=5)
+
+
+class InvestigateFeedbackResponse(BaseModel):
+    investigation_id: str
+    rating: int
+    stored: bool

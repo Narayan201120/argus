@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from app.config import settings
+from app.connectors.availability import is_demoted
 from app.connectors.base import BaseConnector
 from app.embeddings import cosine_similarity, get_embedder
 from app.utils.logger import get_logger
@@ -245,15 +246,44 @@ class RoleBindingService:
     ) -> BaseConnector:
         excluded_ids = excluded_ids or set()
         by_id = {connector.connector_id: connector for connector in active_connectors}
+        chain = self.preference_chain(role, overrides)
 
-        for connector_id in self.preference_chain(role, overrides):
+        # First pass: skip demoted connectors exactly like unavailable ones.
+        demoted_skipped: list[str] = []
+        for connector_id in chain:
             connector = by_id.get(connector_id)
             if connector is not None and connector.connector_id not in excluded_ids:
+                if is_demoted(connector.connector_id):
+                    demoted_skipped.append(connector.connector_id)
+                    continue
                 return connector
 
         for connector in active_connectors:
-            if connector.connector_id not in excluded_ids:
-                return connector
+            if connector.connector_id in excluded_ids:
+                continue
+            if is_demoted(connector.connector_id):
+                if connector.connector_id not in demoted_skipped:
+                    demoted_skipped.append(connector.connector_id)
+                continue
+            return connector
+
+        if demoted_skipped:
+            # Every candidate is demoted: degrade, never crash. Fall through
+            # ignoring demotion with a loud log, mirroring the
+            # unavailable-tolerant behavior below.
+            logger.warning({
+                "message": "All selection candidates demoted; falling through ignoring demotion",
+                "role": role,
+                "demoted_skipped": sorted(demoted_skipped),
+            })
+            for connector_id in chain:
+                connector = by_id.get(connector_id)
+                if connector is not None and connector.connector_id not in excluded_ids:
+                    return connector
+
+            for connector in active_connectors:
+                if connector.connector_id not in excluded_ids:
+                    return connector
 
         # A single provider may legitimately fill every role once
         # exclusions apply; reuse it rather than failing the request.

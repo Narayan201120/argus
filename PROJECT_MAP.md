@@ -1,48 +1,72 @@
 # ARGUS Project Map
 
-Last updated: August 25, 2026 (v0.4.0 - Phase 3 complete)
+Last updated: September 5, 2026 (v0.5.0 - Phase 4 complete)
 
 ## Current Stage
 
-ARGUS is a backend-only multi-model orchestration platform at **v0.3.0**.
-Phase 1 (bounded parallel pipeline) and Phase 2 (intelligence, voice,
-observability, release engineering) are complete and CI-guarded.
+ARGUS is a deep-research orchestration platform at **v0.5.0**.
+Phase 1 (bounded parallel pipeline), Phase 2 (intelligence, voice,
+observability), and Phase 3 (web UI, memory, A/B experiments, SDK) are
+complete and CI-guarded. Phase 4 (DEC-053) adds the investigation loop:
+`POST /v1/investigate` fans out parallel tool calls (Radar, RAG, web)
+onto an Evidence Board (Investigation/Evidence/Claim), concurrent
+analysis/critique/gap workers steer adaptive follow-up rounds under
+config budgets (iterations, tool calls, wall clock, cost), and milestone
+synthesis streams a Markdown report to completion.
 
 What is implemented now:
 - FastAPI app: `POST /v1/query`, `POST /v1/query/stream` (SSE),
-  `POST /v1/transcribe`, `POST /v1/query/audio`, `POST /v1/report`,
-  `GET /v1/report/{id}`, `GET /v1/health`, `GET /v1/models`,
-  `GET /v1/metrics`, `POST /v1/auth/token`
+  `POST /v1/transcribe`, `POST /v1/query/audio`, `POST /v1/speak`,
+  `POST /v1/report`, `GET /v1/report/{id}`, `POST /v1/investigate`,
+  `GET /v1/investigate/{id}`, `POST /v1/investigate/{id}/cancel`,
+  `POST /v1/investigate/{id}/feedback`, `GET /v1/investigate/{id}/stream`,
+  `GET /v1/investigations`, `GET /v1/radar/papers*` proxies,
+  `GET /v1/library/*` proxies, `GET /v1/health`, `GET /v1/models`,
+  `GET /v1/metrics`, `POST /v1/auth/token`, `POST /v1/feedback`
 - Four connectors (Gemini, OpenAI, Claude, Mistral); model IDs
   env-configurable (`GEMINI_MODEL` / `MISTRAL_MODEL`); provider 429s
-  surface as `rate_limited` with retry hints
+  surface as `rate_limited` with retry hints; repeated auth failures
+  demote a connector until a success restores it
 - Router strategies: `static` (YAML chains) and `semantic`
   (embeddings-first via Gemini/OpenAI embeddings, keyword fallback,
   failure cooldown); profiles live in `config/routing.yaml` with
   per-profile `keywords:` and `description:`
 - Deep-report mode: planner -> bounded parallel tracks -> global
   verifier -> writer -> reviewer repair loop, job store memory+Redis
+- Investigation loop: `app/tools/` (radar/rag/web + registry + dispatch),
+  `app/evidence/` (board models + snapshot store), `app/analysis/`
+  (board renderer, workers, loop, milestone synthesis, event bus);
+  budgets `INVESTIGATION_MAX_ITERATIONS/MAX_TOOL_CALLS/MAX_WALL_TIME_S/
+  MAX_WEB_CALLS/MAX_COST_USD`; terminal reasons incl `COST_LIMIT`
+- Web tools: Tavily search + trafilatura fetch (`TAVILY_API_KEY`,
+  follow-up rounds only, SSRF guard, size caps)
+- Workspace UI (React+Bun, served from `/`): chat, investigations with
+  live board + streaming report, Radar search/saved, RAG library,
+  investigation history, chat-to-investigation handoff
 - Sarvam speech-to-text input (saaras:v3) with credit-safety guards
 - Redis response cache + rate limiting (subject-keyed when authed,
   IP fallback); everything fails open without Redis
 - Opt-in JWT auth (client-credentials dev flow)
-- Prometheus metrics + provisioned Grafana dashboard
+- Prometheus metrics + provisioned Grafana dashboard (investigation
+  times, loop stops, spend, feedback)
   (`docker compose --profile observability up`) and opt-in OTel tracing
 - CI gate on every push/PR: ruff, mypy, compileall, mock-only pytest
 
-Not implemented (Phase 3 backlog):
+Not implemented (future scope):
 - Local model connector (Ollama/LM Studio) - deferred, no local compute
-- Plugin SDK
+- Per-user RAG authorization mapping (service identity is temporary,
+  RAG stays final authority)
+- OAuth2
 - Kubernetes Helm chart
 
-In progress (Phase 3): web UI shipped; conversation memory shipped;
-A/B experiments + feedback shipped; plugin SDK + Helm pending.
+In progress: nothing open. Phase 4 complete; live smoke of one
+end-to-end investigation waits on working provider keys.
 
 ## Top-Level Structure
 
 `app/` - application code (see Code Map)
 
-`tests/` - pytest suite, 139 tests, mock-only (no live provider calls;
+`tests/` - pytest suite, 296+ tests, mock-only (no live provider calls;
 conftest forces embedding provider off in tests)
 
 `scripts/smoke_live.py` - env-gated live smoke checks against a running
@@ -101,7 +125,7 @@ reviewer asynchronously.
 Redis/cache/rate-limit, report rounds, Sarvam STT, embedding router,
 JWT, tracing knobs
 
-`pyproject.toml` - ruff/mypy/pytest config; version = 0.3.0
+`pyproject.toml` - ruff/mypy/pytest config; version = 0.5.0
 
 ### API Layer
 
@@ -227,6 +251,9 @@ Gaps: no live-provider integration tests by design (DEC-008);
 Phase 1 (Stages 0-8): COMPLETE. Phase 2 (P2-0..P2-4): COMPLETE at v0.3.0.
 Phase 3 (P3-0..P3-7, DEC-048): COMPLETE at v0.4.0 - debt/polish, React UI,
 voice loop, working memory, A/B experiments + feedback, connector SDK.
+Phase 4 (P4-0..P4-5, DEC-053): COMPLETE at v0.5.0 - Evidence Board,
+tool layer (Radar/RAG/web), analysis workers + adaptive loop, milestone
+streaming synthesis, workspace UI, cost governance, dashboards.
 Deferred to future scope: local models (no compute), Kubernetes/Helm
 (revisit when a deployment target exists), long-term memory recall,
-response diff view, streaming TTS.
+per-user RAG authorization mapping, response diff view, streaming TTS.

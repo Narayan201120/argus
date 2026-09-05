@@ -44,6 +44,11 @@ def test_meta_endpoint():
     response = client.get("/v1/meta")
     assert response.status_code == 200
     assert "ARGUS" in response.json()["name"]
+    assert set(response.json()["workspace"]) == {"radar", "rag"}
+
+
+def test_favicon_returns_no_content():
+    assert client.get("/favicon.ico").status_code == 204
 
 
 def test_routing_info_exposes_strategies_and_profiles():

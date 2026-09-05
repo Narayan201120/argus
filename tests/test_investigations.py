@@ -400,3 +400,147 @@ def test_list_route_limit_param_respected() -> None:
         assert len(default_resp.json()["investigations"]) >= 1
     finally:
         client.post(f"/v1/investigate/{inv_id}/cancel")
+
+
+# ── Investigation feedback (P4-5c) ───────────────────────────────────────────
+
+
+async def test_investigation_feedback_round_trip() -> None:
+    from app.feedback import get_investigation_rating
+
+    inv = await manager.create("feedback round trip query", "local")
+    try:
+        resp = client.post(f"/v1/investigate/{inv.id}/feedback", json={"rating": 4})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body == {"investigation_id": inv.id, "rating": 4, "stored": True}
+        assert await get_investigation_rating(inv.id) == 4
+    finally:
+        await manager.cancel(inv.id)
+
+
+async def test_investigation_feedback_rating_bounds() -> None:
+    inv = await manager.create("feedback bounds query", "local")
+    try:
+        assert client.post(f"/v1/investigate/{inv.id}/feedback", json={"rating": 0}).status_code == 422
+        assert client.post(f"/v1/investigate/{inv.id}/feedback", json={"rating": 6}).status_code == 422
+    finally:
+        await manager.cancel(inv.id)
+
+
+def test_investigation_feedback_unknown_id_returns_404() -> None:
+    resp = client.post("/v1/investigate/inv_nope_unknown/feedback", json={"rating": 5})
+    assert resp.status_code == 404
+
+
+async def test_investigation_feedback_503_without_redis(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.rediskit import holder
+
+    inv = await manager.create("feedback no redis query", "local")
+    try:
+        monkeypatch.setattr(holder, "client", None)
+        resp = client.post(f"/v1/investigate/{inv.id}/feedback", json={"rating": 3})
+        assert resp.status_code == 503
+    finally:
+        monkeypatch.undo()
+        await manager.cancel(inv.id)
+
+
+async def test_investigation_feedback_metric_increments() -> None:
+    from prometheus_client import REGISTRY
+
+    inv = await manager.create("feedback metric query", "local")
+    try:
+        before = REGISTRY.get_sample_value(
+            "argus_investigation_feedback_total", {"rating": "5"}
+        ) or 0.0
+        resp = client.post(f"/v1/investigate/{inv.id}/feedback", json={"rating": 5})
+        assert resp.status_code == 200
+        after = REGISTRY.get_sample_value(
+            "argus_investigation_feedback_total", {"rating": "5"}
+        ) or 0.0
+        assert after == before + 1.0
+    finally:
+        await manager.cancel(inv.id)
+
+
+# ── Supervisor sweep on restart (P4-5d) ───────────────────────────────────────
+
+
+async def test_sweep_expires_overdue_row() -> None:
+    from app.investigations import InvestigationManager
+
+    fresh = InvestigationManager()
+    inv = await fresh.create("sweep overdue query", "local")
+    try:
+        # Simulate a restart: drop in-memory supervision without touching the store.
+        task = fresh._supervisors.pop(inv.id, None)
+        if task is not None:
+            task.cancel()
+        fresh._events.pop(inv.id, None)
+        inv.deadline_at = time.time() - 1.0
+        await fresh._store.save(inv, settings.investigation_ttl_s)
+        result = await fresh.sweep_expired()
+        assert result["expired"] == 1
+        assert result["rehydrated"] == 0
+        loaded = await fresh.get(inv.id)
+        assert loaded is not None
+        assert loaded.status == InvestigationStatus.BUDGET_EXHAUSTED
+        assert loaded.status_reason == StatusReason.WALL_CLOCK_LIMIT
+    finally:
+        await fresh.cancel(inv.id)
+
+
+async def test_sweep_rehydrates_live_row_and_expiry_fires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.investigations import InvestigationManager
+
+    monkeypatch.setattr(settings, "investigation_max_wall_time_s", 1)
+    fresh = InvestigationManager()
+    inv = await fresh.create("sweep live query", "local")
+    try:
+        task = fresh._supervisors.pop(inv.id, None)
+        if task is not None:
+            task.cancel()
+        fresh._events.pop(inv.id, None)
+        assert inv.id not in fresh._events
+        assert inv.id not in fresh._supervisors
+        result = await fresh.sweep_expired()
+        assert result == {"expired": 0, "rehydrated": 1}
+        assert inv.id in fresh._events
+        assert inv.id in fresh._supervisors
+        await asyncio.sleep(1.4)
+        loaded = await fresh.get(inv.id)
+        assert loaded is not None
+        assert loaded.status == InvestigationStatus.BUDGET_EXHAUSTED
+        assert loaded.status_reason == StatusReason.WALL_CLOCK_LIMIT
+    finally:
+        await fresh.cancel(inv.id)
+
+
+async def test_sweep_is_idempotent() -> None:
+    from app.investigations import InvestigationManager
+
+    fresh = InvestigationManager()
+    inv = await fresh.create("sweep idempotent query", "local")
+    try:
+        task = fresh._supervisors.pop(inv.id, None)
+        if task is not None:
+            task.cancel()
+        fresh._events.pop(inv.id, None)
+        first = await fresh.sweep_expired()
+        assert first["expired"] == 0
+        assert first["rehydrated"] == 1
+        second = await fresh.sweep_expired()
+        assert second == {"expired": 0, "rehydrated": 0}
+    finally:
+        await fresh.cancel(inv.id)
+
+
+async def test_sweep_empty_store_returns_zeros() -> None:
+    from app.evidence.store import EvidenceBoardStore
+    from app.investigations import InvestigationManager
+
+    fresh = InvestigationManager(EvidenceBoardStore())
+    assert await fresh.sweep_expired() == {"expired": 0, "rehydrated": 0}

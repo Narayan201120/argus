@@ -8,6 +8,8 @@ from app.api.schemas import (
     BoardCounts,
     CancelInvestigationResponse,
     InvestigateCreated,
+    InvestigateFeedbackRequest,
+    InvestigateFeedbackResponse,
     InvestigateRequest,
     InvestigationBoardResponse,
     InvestigationListResponse,
@@ -93,4 +95,29 @@ async def cancel_investigation(investigation_id: str) -> CancelInvestigationResp
         user_id=investigation.user_id,
         status=investigation.status,
         status_reason=investigation.status_reason,
+    )
+
+
+@router.post(
+    "/investigate/{investigation_id}/feedback",
+    response_model=InvestigateFeedbackResponse,
+)
+async def post_investigation_feedback(
+    investigation_id: str, request: InvestigateFeedbackRequest
+) -> InvestigateFeedbackResponse:
+    from app.feedback import save_investigation_rating
+    from app.metrics import INVESTIGATION_FEEDBACK_TOTAL
+
+    investigation = await manager.get(investigation_id)
+    if investigation is None:
+        raise HTTPException(status_code=404, detail="Investigation not found.")
+    stored = await save_investigation_rating(investigation_id, request.rating)
+    if not stored:
+        raise HTTPException(
+            status_code=503,
+            detail="Feedback storage unavailable (Redis down or memory disabled).",
+        )
+    INVESTIGATION_FEEDBACK_TOTAL.labels(rating=str(request.rating)).inc()
+    return InvestigateFeedbackResponse(
+        investigation_id=investigation_id, rating=request.rating, stored=True
     )

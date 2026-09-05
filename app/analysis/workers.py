@@ -22,6 +22,8 @@ from app.connectors.base import (
     ConnectorStatus,
 )
 from app.connectors.registry import registry
+from app.costs import estimate_llm_cost
+from app.investigations import manager
 from app.metrics import WORKER_CALLS, WORKER_LATENCY, record_role_tokens
 
 WORKER_ANALYSIS = "analysis"
@@ -180,6 +182,8 @@ async def _run_worker(
     board_text: str,
     query: str,
     config: ConnectorConfig,
+    *,
+    investigation_id: str | None = None,
 ) -> ResultT:
     start = time.perf_counter()
     status = "ok"
@@ -204,6 +208,13 @@ async def _run_worker(
             status = "parse_error"
             raise WorkerError(f"parse_error: {exc}") from exc
         record_role_tokens(worker, connector.connector_id, response.token_usage)
+        if investigation_id and response.token_usage is not None:
+            amount = estimate_llm_cost(
+                connector.connector_id,
+                response.token_usage.prompt_tokens,
+                response.token_usage.completion_tokens,
+            )
+            await manager.add_cost(investigation_id, amount)
         return result
     except WorkerError as exc:
         message = str(exc)
@@ -222,25 +233,34 @@ async def _run_worker(
         WORKER_CALLS.labels(worker=worker, status=status).inc()
 
 
-async def analyze_board(board_text: str, query: str) -> AnalysisOutput:
+async def analyze_board(
+    board_text: str, query: str, *, investigation_id: str | None = None
+) -> AnalysisOutput:
     """Propose evidence-grounded claim drafts for the board."""
     return await _run_worker(
         WORKER_ANALYSIS, ANALYSIS_PROMPT, AnalysisOutput,
         board_text, query, WORKER_CONFIGS[WORKER_ANALYSIS],
+        investigation_id=investigation_id,
     )
 
 
-async def critique_board(board_text: str, query: str) -> CritiqueOutput:
+async def critique_board(
+    board_text: str, query: str, *, investigation_id: str | None = None
+) -> CritiqueOutput:
     """Challenge weak or unsupported claims on the board."""
     return await _run_worker(
         WORKER_CRITIQUE, CRITIQUE_PROMPT, CritiqueOutput,
         board_text, query, WORKER_CONFIGS[WORKER_CRITIQUE],
+        investigation_id=investigation_id,
     )
 
 
-async def assess_gaps(board_text: str, query: str) -> GapOutput:
+async def assess_gaps(
+    board_text: str, query: str, *, investigation_id: str | None = None
+) -> GapOutput:
     """Judge evidence sufficiency and propose follow-up tool queries."""
     return await _run_worker(
         WORKER_GAP, GAP_PROMPT, GapOutput,
         board_text, query, WORKER_CONFIGS[WORKER_GAP],
+        investigation_id=investigation_id,
     )
