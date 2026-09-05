@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     # Answers longer than this are stored truncated in history
     memory_max_answer_chars: int = 1200
 
+    # Investigations (Phase 4 deep research, DEC-053)
+    investigation_max_iterations: int = 3
+    investigation_max_tool_calls: int = 12
+    investigation_max_wall_time_s: int = 120
+    investigation_ttl_s: int = 604800
+
     # Tracing (opt-in OpenTelemetry)
     tracing_enabled: bool = False
     tracing_exporter: str = "console"

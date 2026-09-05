@@ -7,6 +7,7 @@ from app.api.routes import audio as audio_router
 from app.api.routes import auth as auth_router
 from app.api.routes import feedback as feedback_router
 from app.api.routes import health as health_router
+from app.api.routes import investigations as investigations_router
 from app.api.routes import models as models_router
 from app.api.routes import query as query_router
 from app.api.routes import reports as reports_router
@@ -76,6 +77,7 @@ app.include_router(query_router.router, prefix="/v1", tags=["Query"])
 app.include_router(stream_router.router, prefix="/v1", tags=["Query"])
 app.include_router(reports_router.router, prefix="/v1", tags=["Reports"])
 app.include_router(health_router.router, prefix="/v1", tags=["Health"])
+app.include_router(investigations_router.router, prefix="/v1", tags=["Investigations"])
 app.include_router(models_router.router, prefix="/v1", tags=["Models"])
 app.include_router(sessions_router.router, prefix="/v1", tags=["Sessions"])
 app.include_router(metrics_router, prefix="/v1", tags=["Metrics"])

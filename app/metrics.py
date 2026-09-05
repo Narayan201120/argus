@@ -94,6 +94,11 @@ FEEDBACK_TOTAL = Counter(
     "Quality feedback ratings received, by rating value.",
     ["rating"],
 )
+INVESTIGATIONS_TOTAL = Counter(
+    "argus_investigations_total",
+    "Investigation lifecycle events by event type.",
+    ["event"],
+)
 
 
 def record_role_outcome(role: str, connector_id: str, status: str, latency_ms: int) -> None:

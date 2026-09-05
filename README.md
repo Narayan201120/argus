@@ -57,6 +57,9 @@ The API is available at `http://127.0.0.1:8000`, with interactive docs at `/docs
 - `POST /v1/query/stream` - SSE variant: role completion events, streamed synthesis tokens, terminal `final` envelope
 - `POST /v1/report` - start a deep-report job (returns job ID immediately)
 - `GET /v1/report/{job_id}` - poll status; completed jobs carry Markdown
+- `POST /v1/investigate` - start a deep-research investigation (202 + ID immediately; Phase 4)
+- `GET /v1/investigate/{id}` - full Evidence Board: investigation, evidence, claims, counts
+- `POST /v1/investigate/{id}/cancel` - stop an investigation; board snapshot is kept
 
 Example request:
 

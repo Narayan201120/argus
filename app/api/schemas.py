@@ -179,3 +179,52 @@ class ReportJobStatus(BaseModel):
     role_assignments: dict[str, str] = Field(default_factory=dict)
     created_at: float
     updated_at: float
+
+
+# P4-0 investigate API schemas (append-only section; existing classes above are untouched).
+from app.evidence.models import (  # noqa: E402
+    Claim,
+    Evidence,
+    InvestigationStatus,
+    StatusReason,
+)
+
+
+class InvestigateRequest(BaseModel):
+    # "local" is an identity placeholder and MUST NOT be treated as proof of authorization.
+    query: str = Field(..., min_length=1, max_length=4000)
+    user_id: str = Field(default="local", min_length=1, max_length=128)
+
+
+class InvestigateCreated(BaseModel):
+    investigation_id: str
+    user_id: str
+    status: InvestigationStatus
+    status_reason: StatusReason | None = None
+
+
+class BoardCounts(BaseModel):
+    evidence: int
+    claims: int
+
+
+class InvestigationBoardResponse(BaseModel):
+    investigation_id: str
+    user_id: str
+    query: str
+    status: InvestigationStatus
+    status_reason: StatusReason | None = None
+    created_at: float
+    updated_at: float
+    schema_version: str
+    evidence: list[Evidence]
+    claims: list[Claim]
+    counts: BoardCounts
+    truncated: bool
+
+
+class CancelInvestigationResponse(BaseModel):
+    investigation_id: str
+    user_id: str
+    status: InvestigationStatus
+    status_reason: StatusReason | None = None
