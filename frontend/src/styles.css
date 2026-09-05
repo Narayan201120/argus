@@ -242,3 +242,7 @@ footer .stop { border-color: #f85149; color: #ff7b72; }
 .pager { display: flex; gap: 8px; align-items: center; font-size: 12px; color: #8b90a0; }
 .bookmark { border: none; background: transparent; color: #8b90a0; font-size: 14px; padding: 0 2px; }
 .bookmark.on { color: #e8b93f; }
+
+/* P4-4 document library (append-only). */
+.paper-card.selected { border-color: #7aa2ff; }
+.lib-preview { white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.55; background: #0f1117; border: 1px solid #23262f; border-radius: 8px; padding: 10px 12px; max-height: 420px; overflow-y: auto; }

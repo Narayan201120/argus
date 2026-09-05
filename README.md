@@ -65,6 +65,10 @@ The API is available at `http://127.0.0.1:8000`, with interactive docs at `/docs
 - `GET /v1/radar/papers` - Radar paper search proxy (q/year/topic/author/page/page_size/ids)
 - `GET /v1/radar/papers/{id}` - Radar paper detail proxy (abstract, DOI, topics)
 - `GET /v1/radar/papers/{id}/similar` - Radar similar-papers proxy (fixed 5, scored)
+- `GET /v1/library/documents` - RAG document list proxy (name, size)
+- `GET /v1/library/documents/{filename}` - RAG document preview proxy (20k chars, truncated flag)
+- `GET /v1/library/collections` - RAG collection list proxy
+- `GET /v1/library/collections/{id}` - RAG collection detail proxy (member documents)
 
 Example request:
 

@@ -213,3 +213,44 @@ export interface InvestigationSummary {
 export interface InvestigationListResponse {
   investigations: InvestigationSummary[]
 }
+
+// P4-4 RAG document library types (append-only; existing types above are untouched).
+
+export interface LibraryDocumentItem {
+  name: string
+  size_bytes: number
+}
+
+export interface LibraryDocumentListResponse {
+  count: number
+  documents: LibraryDocumentItem[]
+}
+
+export interface LibraryDocumentPreview {
+  name: string
+  extension: string
+  content: string
+  total_characters: number
+  truncated: boolean
+}
+
+export interface LibraryCollectionSummary {
+  id: string
+  name: string
+  description: string
+  document_count: number
+  created_at: number
+}
+
+export interface LibraryCollectionListResponse {
+  count: number
+  collections: LibraryCollectionSummary[]
+}
+
+export interface LibraryCollectionDetail {
+  id: string
+  name: string
+  description: string
+  created_at: number
+  documents: LibraryDocumentItem[]
+}

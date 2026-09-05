@@ -123,6 +123,8 @@ class Settings(BaseSettings):
     # Research Radar workspace proxy (Phase 4 P4-4; empty key = none sent)
     radar_api_key: str = ""
     workspace_radar_enabled: bool = False
+    # Document library proxy (Phase 4 P4-4; off unless explicitly enabled)
+    workspace_rag_enabled: bool = False
 
 
 settings = Settings()

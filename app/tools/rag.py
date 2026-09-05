@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 RAG_TOP_K = 10
 _CHUNK_MAX_CHARS = 4000
 _TOKEN_SKEW_S = 30.0
-_DEFAULT_TOKEN_TTL_S = 300.0
+_DEFAULT_TOKEN_TTL_S = 1500.0  # RAG access lifetime is 30 min; refresh early
 
 
 def _confidence_or(value: Any, fallback: float) -> float:
@@ -84,7 +84,11 @@ class RagRetrieveTool(BaseTool):
             raise RuntimeError(f"rag sign-in returned invalid JSON: {exc}") from exc
         if not isinstance(payload, dict):
             raise RuntimeError("rag sign-in returned an unexpected body")
-        token = payload.get("access") or payload.get("access_token") or payload.get("token")
+        tokens = payload.get("tokens")
+        if isinstance(tokens, dict):
+            token = tokens.get("access")
+        else:
+            token = payload.get("access") or payload.get("access_token") or payload.get("token")
         if not token:
             raise RuntimeError("rag sign-in returned no access token")
         ttl: Any = payload.get("expires_in", _DEFAULT_TOKEN_TTL_S)
@@ -107,7 +111,9 @@ class RagRetrieveTool(BaseTool):
         content = str(content or "")[:_CHUNK_MAX_CHARS].strip()
         if not content:
             return None
-        source_ref = hit.get("doc") or hit.get("reference") or hit.get("url") or hit.get("id")
+        source_ref = (
+            hit.get("source") or hit.get("doc") or hit.get("reference") or hit.get("url") or hit.get("id")
+        )
         return EvidencePayload(
             source_ref=str(source_ref) if source_ref else f"rag:{index}",
             content=content,
