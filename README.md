@@ -61,6 +61,10 @@ The API is available at `http://127.0.0.1:8000`, with interactive docs at `/docs
 - `GET /v1/investigate/{id}` - full Evidence Board: investigation, evidence, claims, counts
 - `POST /v1/investigate/{id}/cancel` - stop an investigation; board snapshot is kept
 - `GET /v1/investigate/{id}/stream` - SSE: board snapshot then live round/evidence/claim/synthesis events to terminal
+- `GET /v1/investigations?limit=` - investigation history, newest first
+- `GET /v1/radar/papers` - Radar paper search proxy (q/year/topic/author/page/page_size/ids)
+- `GET /v1/radar/papers/{id}` - Radar paper detail proxy (abstract, DOI, topics)
+- `GET /v1/radar/papers/{id}/similar` - Radar similar-papers proxy (fixed 5, scored)
 
 Example request:
 

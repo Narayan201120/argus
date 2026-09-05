@@ -147,3 +147,69 @@ export interface InvestigationStreamHandlers {
   onTerminal?: (event: InvestigationTerminalEvent) => void
   onError?: (message: string) => void
 }
+
+// P4-4 radar workspace + investigation history types (append-only; existing types above are untouched).
+
+export interface RadarAuthor {
+  id: string
+  name: string
+}
+
+export interface RadarPaperItem {
+  id: string
+  title: string
+  publication_year: number | null
+  cited_by_count: number
+  authors: RadarAuthor[]
+}
+
+export interface RadarPage {
+  items: RadarPaperItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface RadarPaperDetail {
+  id: string
+  title: string
+  abstract: string | null
+  publication_year: number | null
+  doi: string | null
+  cited_by_count: number
+  authors: RadarAuthor[]
+  topics: string[]
+}
+
+export interface RadarSimilarPaper {
+  id: string
+  title: string
+  similarity_score: number
+}
+
+export interface RadarSearchParams {
+  q?: string
+  year?: string
+  topic?: string
+  author?: string
+  page?: number
+  page_size?: number
+  ids?: string
+}
+
+export interface InvestigationSummary {
+  investigation_id: string
+  user_id: string
+  query: string
+  status: string
+  status_reason: string | null
+  created_at: number
+  updated_at: number
+  evidence_count: number
+  claim_count: number
+  synthesis_count: number
+}
+
+export interface InvestigationListResponse {
+  investigations: InvestigationSummary[]
+}

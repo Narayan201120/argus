@@ -216,3 +216,29 @@ footer .stop { border-color: #f85149; color: #ff7b72; }
 .inv-start { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .inv-start textarea { width: 100%; }
 @media (max-width: 800px) { .inv-grid { grid-template-columns: 1fr; } }
+
+/* P4-4 workspace shell + Radar/Library views (append-only). */
+.hidden { display: none !important; }
+.view { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.radar-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.radar-bar input { flex: 2; min-width: 140px; background: #171a23; color: #e6e8ee; border: 1px solid #2c3040; border-radius: 8px; padding: 6px 10px; font-size: 13px; }
+.radar-bar .filter { flex: 1; min-width: 80px; }
+.paper-card { display: flex; gap: 8px; align-items: baseline; background: #171a23; border: 1px solid #2c3040; border-radius: 8px; padding: 8px 10px; font-size: 13px; cursor: pointer; }
+.paper-card:hover { border-color: #7aa2ff; }
+.paper-card .title { flex: 1; min-width: 0; }
+.paper-card .year, .paper-card .cites { color: #aab0c0; font-size: 11px; white-space: nowrap; }
+.paper-card .authors { color: #8b90a0; font-size: 11px; }
+.radar-detail { background: #171a23; border: 1px solid #2c3040; border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.55; }
+.radar-detail .sub { color: #8b90a0; font-size: 12px; }
+.radar-detail .topics { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.radar-detail a { color: #7aa2ff; }
+.radar-detail h4 { margin: 10px 0 4px; font-size: 12px; color: #8b90a0; text-transform: uppercase; letter-spacing: 1px; }
+.sim-row { display: flex; gap: 8px; font-size: 12px; padding: 4px 0; border-top: 1px solid #23262f; }
+.sim-row .score { color: #e8b93f; margin-left: auto; white-space: nowrap; }
+.lib-head { margin: 0; font-size: 12px; color: #8b90a0; text-transform: uppercase; letter-spacing: 1px; }
+.lib-item { background: #171a23; border: 1px solid #2c3040; border-radius: 8px; padding: 8px 10px; font-size: 13px; cursor: pointer; }
+.lib-item:hover { border-color: #7aa2ff; }
+.lib-item .sub { color: #8b90a0; font-size: 11px; margin-top: 4px; }
+.pager { display: flex; gap: 8px; align-items: center; font-size: 12px; color: #8b90a0; }
+.bookmark { border: none; background: transparent; color: #8b90a0; font-size: 14px; padding: 0 2px; }
+.bookmark.on { color: #e8b93f; }

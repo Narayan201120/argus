@@ -366,16 +366,23 @@ def test_registry_rejects_duplicate_names(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_map_paper_shapes_evidence_payload() -> None:
     item = _map_paper(
-        {"title": "Paper title", "abstract": "Abstract text", "url": "https://x", "score": 0.9},
+        {"id": 478, "title": "Paper title", "abstract": "Abstract text", "doi": "10.1234/abc"},
         0,
         "radar_search",
         5,
     )
     assert item is not None
-    assert item.source_ref == "https://x"
+    assert item.source_ref == "https://doi.org/10.1234/abc"
     assert item.type == "radar_paper"
-    assert item.confidence == 0.9
+    assert item.confidence == 1.0  # rank 0, no score
     assert item.content == "Paper title\nAbstract text"
+    full_doi = _map_paper({"id": 1, "title": "T", "doi": "https://doi.org/10.9/x"}, 3, "radar_search", 1)
+    assert full_doi is not None
+    assert full_doi.source_ref == "https://doi.org/10.9/x"
+    similar = _map_paper({"id": 320, "title": "Similar paper", "similarity_score": 0.7138}, 0, "radar_similar", 5)
+    assert similar is not None
+    assert similar.confidence == 0.7138
+    assert similar.source_ref == "radar:320"
     assert _map_paper({"title": "", "abstract": ""}, 0, "radar_search", 1) is None
     assert _map_paper("not-a-dict", 0, "radar_search", 1) is None
     clamped = _map_paper({"title": "T", "score": 5.0}, 0, "radar_search", 1)

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { getModels, getRouting, postFeedback, speakText, streamQuery, transcribeAudio } from './api'
 import { startInvestigation } from './investigate'
 import InvestigationView from './InvestigationView'
+import LibraryView from './LibraryView'
+import RadarView from './RadarView'
 import type {
   ModelInfo,
   QueryEnvelope,
@@ -88,7 +90,7 @@ export default function App() {
   const [transcribing, setTranscribing] = useState(false)
   const [speakingKey, setSpeakingKey] = useState<string | null>(null)
   const [ratings, setRatings] = useState<Record<string, number>>({})
-  const [mode, setMode] = useState<'chat' | 'investigate'>('chat')
+  const [mode, setMode] = useState<'chat' | 'investigate' | 'radar' | 'library'>('chat')
   const [investigationId, setInvestigationId] = useState<string | null>(null)
   const [invQuery, setInvQuery] = useState('')
   const [invBusy, setInvBusy] = useState(false)
@@ -332,6 +334,24 @@ export default function App() {
     }
   }
 
+  async function investigateFromChat(answerIndex: number) {
+    if (invBusy) return
+    const prev = messages[answerIndex - 1]
+    const text = (prev && prev.kind === 'user' ? prev.content : (lastQuery ?? '')).trim()
+    if (!text) return
+    setInvBusy(true)
+    setInvFailure(null)
+    try {
+      const created = await startInvestigation(text)
+      setInvestigationId(created.investigation_id)
+    } catch (err) {
+      setInvFailure((err as Error).message)
+    } finally {
+      setInvBusy(false)
+      setMode('investigate')
+    }
+  }
+
   return (
     <div className="app">
       <header>
@@ -365,6 +385,20 @@ export default function App() {
             title="Deep-research investigation mode"
           >
             Investigate
+          </button>
+          <button
+            className={`chip ${mode === 'radar' ? 'active' : ''}`}
+            onClick={() => setMode('radar')}
+            title="Paper discovery workspace"
+          >
+            Radar
+          </button>
+          <button
+            className={`chip ${mode === 'library' ? 'active' : ''}`}
+            onClick={() => setMode('library')}
+            title="Document library and investigation history"
+          >
+            Library
           </button>
           <button
             className={`chip ${voiceOut ? 'active' : ''}`}
@@ -413,10 +447,13 @@ export default function App() {
         </span>
       </div>
 
-      {mode === 'investigate' ? (
-        <main className="thread">
+      <div className={`thread${mode === 'investigate' ? '' : ' hidden'}`}>
           {investigationId ? (
-            <InvestigationView investigationId={investigationId} onClose={() => setInvestigationId(null)} />
+            <InvestigationView
+              key={investigationId}
+              investigationId={investigationId}
+              onClose={() => setInvestigationId(null)}
+            />
           ) : (
             <div className="bubble inv-start">
               <div className="waiting">Deep research: start an investigation, then watch evidence, claims and the report arrive live.</div>
@@ -435,10 +472,9 @@ export default function App() {
               </div>
             </div>
           )}
-        </main>
-      ) : (
-      <>
-      <main className="thread">
+          {invFailure && investigationId && <div className="failure">{invFailure}</div>}
+      </div>
+      <section className={`thread${mode === 'chat' ? '' : ' hidden'}`}>
         {messages.length === 0 && (
           <div className="empty">Ask ARGUS anything. Complex questions run researcher/analyzer/verifier in parallel.</div>
         )}
@@ -520,6 +556,14 @@ export default function App() {
                     </button>
                   )
                 })}
+                <button
+                  className="chip"
+                  onClick={() => investigateFromChat(index)}
+                  disabled={invBusy}
+                  title="Open this question as a deep-research investigation"
+                >
+                  {invBusy ? 'Starting…' : 'Investigate this'}
+                </button>
               </div>
             )}
 
@@ -540,9 +584,22 @@ export default function App() {
           </article>
         ))}
         <div ref={bottomRef} />
-      </main>
+      </section>
 
-      <footer>
+      <section className={`thread${mode === 'radar' ? '' : ' hidden'}`}>
+        <RadarView />
+      </section>
+
+      <section className={`thread${mode === 'library' ? '' : ' hidden'}`}>
+        <LibraryView
+          onOpenInvestigation={(id) => {
+            setInvestigationId(id)
+            setMode('investigate')
+          }}
+        />
+      </section>
+
+      <footer className={mode === 'chat' ? '' : 'hidden'}>
         <button
           className={`mic ${recording ? 'recording' : ''}`}
           onClick={toggleMic}
@@ -573,8 +630,6 @@ export default function App() {
           </button>
         )}
       </footer>
-      </>
-      )}
     </div>
   )
 }

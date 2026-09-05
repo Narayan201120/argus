@@ -144,6 +144,10 @@ class InvestigationManager:
     async def get(self, investigation_id: str) -> Investigation | None:
         return await self._store.load(investigation_id)
 
+    async def list_recent(self, limit: int = 20) -> list[Investigation]:
+        clamped = max(1, min(int(limit), 100))
+        return await self._store.list_recent(clamped)
+
     @staticmethod
     def check_budgets(inv: Investigation) -> StatusReason | None:
         if time.time() >= inv.deadline_at:

@@ -231,3 +231,20 @@ class CancelInvestigationResponse(BaseModel):
     user_id: str
     status: InvestigationStatus
     status_reason: StatusReason | None = None
+
+
+class InvestigationSummary(BaseModel):
+    investigation_id: str
+    user_id: str
+    query: str
+    status: InvestigationStatus
+    status_reason: StatusReason | None = None
+    created_at: float
+    updated_at: float
+    evidence_count: int
+    claim_count: int
+    synthesis_count: int
+
+
+class InvestigationListResponse(BaseModel):
+    investigations: list[InvestigationSummary]

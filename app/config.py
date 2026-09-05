@@ -120,5 +120,9 @@ class Settings(BaseSettings):
     router_embedding_model: str | None = None
     router_embedding_threshold: float = 0.35
 
+    # Research Radar workspace proxy (Phase 4 P4-4; empty key = none sent)
+    radar_api_key: str = ""
+    workspace_radar_enabled: bool = False
+
 
 settings = Settings()

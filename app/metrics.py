@@ -156,6 +156,11 @@ BUS_DROPS = Counter(
     "Investigation bus events dropped per slow subscriber.",
     ["event"],
 )
+PROXY_CALLS = Counter(
+    "argus_proxy_calls_total",
+    "Workspace proxy calls by service and outcome.",
+    ["service", "status"],
+)
 
 
 def record_role_outcome(role: str, connector_id: str, status: str, latency_ms: int) -> None:

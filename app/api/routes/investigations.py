@@ -10,6 +10,8 @@ from app.api.schemas import (
     InvestigateCreated,
     InvestigateRequest,
     InvestigationBoardResponse,
+    InvestigationListResponse,
+    InvestigationSummary,
 )
 from app.investigations import manager
 
@@ -31,6 +33,29 @@ async def start_investigation(
         status=investigation.status,
         status_reason=investigation.status_reason,
     )
+
+
+@router.get("/investigations", response_model=InvestigationListResponse)
+async def list_investigations(limit: int = 20) -> InvestigationListResponse:
+    investigations = await manager.list_recent(limit)
+    summaries: list[InvestigationSummary] = []
+    for inv in investigations:
+        syntheses = await synthesis_store.load(inv.id)
+        summaries.append(
+            InvestigationSummary(
+                investigation_id=inv.id,
+                user_id=inv.user_id,
+                query=inv.query[:200],
+                status=inv.status,
+                status_reason=inv.status_reason,
+                created_at=inv.created_at,
+                updated_at=inv.updated_at,
+                evidence_count=len(inv.board.evidence),
+                claim_count=len(inv.board.claims),
+                synthesis_count=len(syntheses),
+            )
+        )
+    return InvestigationListResponse(investigations=summaries)
 
 
 @router.get("/investigate/{investigation_id}", response_model=InvestigationBoardResponse)

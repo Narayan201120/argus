@@ -5,6 +5,7 @@ import type { InvestigationBoard, InvestigationSynthesis } from './types'
 interface Props {
   investigationId: string
   onClose: () => void
+  initialId?: string | null
 }
 
 function isTerminalStatus(status: string): boolean {
@@ -16,7 +17,12 @@ function isTerminalStatus(status: string): boolean {
   )
 }
 
-export default function InvestigationView({ investigationId, onClose }: Props) {
+export default function InvestigationView({ investigationId, onClose, initialId }: Props) {
+  // External-open path: a parent can open an investigation it did not start
+  // (chat handoff, history re-open) via initialId. Remount per id (key on the
+  // id at the call site) so each investigation starts with clean state while
+  // running streams survive tab switches.
+  const effectiveId = initialId || investigationId
   const [board, setBoard] = useState<InvestigationBoard | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
   const [streamText, setStreamText] = useState('')
@@ -64,7 +70,7 @@ export default function InvestigationView({ investigationId, onClose }: Props) {
       setStreamText('')
     }
 
-    fetchBoard(investigationId, controller.signal)
+    fetchBoard(effectiveId, controller.signal)
       .then((initial) => {
         if (!live()) return
         setBoard(initial)
@@ -73,7 +79,7 @@ export default function InvestigationView({ investigationId, onClose }: Props) {
           return
         }
         return streamInvestigation(
-          investigationId,
+          effectiveId,
           {
             onBoardSnapshot: (snapshot) => {
               if (!live()) return
@@ -141,13 +147,13 @@ export default function InvestigationView({ investigationId, onClose }: Props) {
       settled = true
       controller.abort()
     }
-  }, [investigationId])
+  }, [effectiveId])
 
   async function stopResearch() {
     if (cancelling || frozen) return
     setCancelling(true)
     try {
-      const result = await cancelInvestigation(investigationId)
+      const result = await cancelInvestigation(effectiveId)
       setBoard((prev) =>
         prev ? { ...prev, status: result.status, status_reason: result.status_reason } : prev,
       )

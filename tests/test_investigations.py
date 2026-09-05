@@ -286,3 +286,117 @@ async def test_read_and_cancel_ignore_user_id() -> None:
     finally:
         client.post(f"/v1/investigate/{alice_id}/cancel")
         client.post(f"/v1/investigate/{local_id}/cancel")
+
+
+# ── List recent (P4-4) ────────────────────────────────────────────────────────
+
+
+async def test_list_recent_ordering_newest_first() -> None:
+    from app.investigations import InvestigationManager
+
+    fresh = InvestigationManager()
+    ids: list[str] = []
+    try:
+        for label in ("first query", "second query", "third query"):
+            inv = await fresh.create(label, "local")
+            ids.append(inv.id)
+            await asyncio.sleep(0.05)  # exceed Windows ~15ms clock granularity
+        recent = await fresh.list_recent(20)
+        got = [inv.id for inv in recent[:3]]
+        assert got == [ids[2], ids[1], ids[0]]
+    finally:
+        for inv_id in ids:
+            await fresh.cancel(inv_id)
+
+
+async def test_list_recent_limit_cap_respected() -> None:
+    from app.investigations import InvestigationManager
+
+    fresh = InvestigationManager()
+    ids: list[str] = []
+    try:
+        for n in range(3):
+            inv = await fresh.create(f"cap query {n}", "local")
+            ids.append(inv.id)
+            await asyncio.sleep(0.05)  # exceed Windows ~15ms clock granularity
+        assert len(await fresh.list_recent(2)) == 2
+        assert [inv.id for inv in await fresh.list_recent(2)] == [ids[2], ids[1]]
+        oversized = await fresh.list_recent(1000)
+        assert len(oversized) == 3  # clamped to 100, not an error
+        assert len(await fresh.list_recent(0)) == 1  # clamped to 1
+    finally:
+        for inv_id in ids:
+            await fresh.cancel(inv_id)
+
+
+async def test_list_recent_empty_store_returns_empty() -> None:
+    from app.evidence.store import EvidenceBoardStore
+    from app.investigations import InvestigationManager
+
+    assert await EvidenceBoardStore().list_recent(20) == []
+    assert await InvestigationManager(EvidenceBoardStore()).list_recent(20) == []
+
+
+async def test_list_recent_fail_open_without_redis(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.investigations import InvestigationManager
+    from app.rediskit import holder
+
+    monkeypatch.setattr(holder, "client", None)
+    fresh = InvestigationManager()
+    first = await fresh.create("no redis one", "local")
+    await asyncio.sleep(0.05)  # exceed Windows ~15ms clock granularity for ordering
+    second = await fresh.create("no redis two", "local")
+    try:
+        recent = await fresh.list_recent(20)
+        assert [inv.id for inv in recent[:2]] == [second.id, first.id]
+    finally:
+        await fresh.cancel(first.id)
+        await fresh.cancel(second.id)
+
+
+async def test_list_summaries_carry_correct_counts() -> None:
+    from app.analysis.synthesis import SynthesisRecord, synthesis_store
+
+    long_query = "q" * 300
+    created = await manager.create(long_query, "alice")
+    inv_id = created.id
+    try:
+        ev1 = _make_evidence(inv_id)
+        ev2 = _make_evidence(inv_id)
+        assert await manager.add_evidence(inv_id, ev1) is not None
+        assert await manager.add_evidence(inv_id, ev2) is not None
+        assert await manager.add_claim(inv_id, _make_claim(inv_id, ev1.id)) is not None
+        records = [
+            SynthesisRecord(milestone=0, markdown="report one", final=False, created_at=time.time()),
+            SynthesisRecord(milestone=1, markdown="report two", final=True, created_at=time.time()),
+        ]
+        await synthesis_store.save_all(inv_id, records, settings.investigation_ttl_s)
+        resp = client.get("/v1/investigations", params={"limit": 100})
+        assert resp.status_code == 200
+        summaries = resp.json()["investigations"]
+        match = next(s for s in summaries if s["investigation_id"] == inv_id)
+        assert match["user_id"] == "alice"
+        assert match["query"] == "q" * 200  # truncated to 200 chars in the route
+        assert match["evidence_count"] == 2
+        assert match["claim_count"] == 1
+        assert match["synthesis_count"] == 2
+        assert match["status"] == "planned"
+        assert match["created_at"] <= match["updated_at"]
+    finally:
+        synthesis_store._memory.pop(inv_id, None)
+        await manager.cancel(inv_id)
+
+
+def test_list_route_limit_param_respected() -> None:
+    created = client.post("/v1/investigate", json={"query": "limit param query"})
+    assert created.status_code == 202
+    inv_id: str = created.json()["investigation_id"]
+    try:
+        resp = client.get("/v1/investigations", params={"limit": 1})
+        assert resp.status_code == 200
+        assert len(resp.json()["investigations"]) == 1
+        default_resp = client.get("/v1/investigations")
+        assert default_resp.status_code == 200
+        assert len(default_resp.json()["investigations"]) >= 1
+    finally:
+        client.post(f"/v1/investigate/{inv_id}/cancel")

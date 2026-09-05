@@ -14,6 +14,7 @@ from app.api.routes import query as query_router
 from app.api.routes import reports as reports_router
 from app.api.routes import sessions as sessions_router
 from app.api.routes import stream as stream_router
+from app.api.routes import workspace as workspace_router
 from app.auth import JWTAuthMiddleware
 from app.cache import ResponseCache
 from app.config import settings
@@ -81,6 +82,7 @@ app.include_router(health_router.router, prefix="/v1", tags=["Health"])
 app.include_router(investigations_router.router, prefix="/v1", tags=["Investigations"])
 app.include_router(investigate_stream_router.router, prefix="/v1", tags=["Investigations"])
 app.include_router(models_router.router, prefix="/v1", tags=["Models"])
+app.include_router(workspace_router.router, prefix="/v1", tags=["Workspace"])
 app.include_router(sessions_router.router, prefix="/v1", tags=["Sessions"])
 app.include_router(metrics_router, prefix="/v1", tags=["Metrics"])
 

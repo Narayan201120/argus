@@ -90,3 +90,65 @@ class EvidenceBoardStore:
         except Exception as exc:  # noqa: BLE001 - fail open, always
             logger.warning({"message": "EvidenceBoard load failed (ignored)", "error": str(exc)})
             return None
+
+    async def list_recent(self, limit: int) -> list[Investigation]:
+        """Newest-first snapshot list. Never raises."""
+        try:
+            clamped = max(1, min(int(limit), 100))
+        except (TypeError, ValueError):
+            clamped = 20
+        try:
+            client = holder.client
+            if client is None:
+                items = sorted(
+                    self._memory.values(), key=lambda inv: inv.created_at, reverse=True
+                )
+                return items[:clamped]
+            scanned_keys: list[str] = []
+            cursor: int = 0
+            while True:
+                try:
+                    cursor, keys = await client.scan(
+                        cursor=cursor, match="argus:inv:*:meta", count=100
+                    )
+                except Exception as exc:  # noqa: BLE001 - fail open, always
+                    logger.warning(
+                        {"message": "EvidenceBoard list scan failed (ignored)", "error": str(exc)}
+                    )
+                    break
+                for key in keys or []:
+                    scanned_keys.append(_as_str(key))
+                    if len(scanned_keys) >= 500:
+                        break
+                if len(scanned_keys) >= 500:
+                    break
+                try:
+                    cursor = int(cursor)
+                except (TypeError, ValueError):
+                    break
+                if cursor == 0:
+                    break
+            prefix, suffix = "argus:inv:", ":meta"
+            ids: set[str] = set(self._memory.keys())
+            for key in scanned_keys:
+                if key.startswith(prefix) and key.endswith(suffix):
+                    ids.add(key[len(prefix) : -len(suffix)])
+            found: list[Investigation] = []
+            for investigation_id in ids:
+                try:
+                    inv = await self.load(investigation_id)
+                except Exception:  # noqa: BLE001 - drop failures silently
+                    continue
+                if inv is not None:
+                    found.append(inv)
+            found.sort(key=lambda inv: inv.created_at, reverse=True)
+            return found[:clamped]
+        except Exception as exc:  # noqa: BLE001 - fail open, always
+            logger.warning({"message": "EvidenceBoard list failed (ignored)", "error": str(exc)})
+            try:
+                fallback = sorted(
+                    self._memory.values(), key=lambda inv: inv.created_at, reverse=True
+                )
+                return fallback[:clamped]
+            except Exception:  # noqa: BLE001 - never raises
+                return []

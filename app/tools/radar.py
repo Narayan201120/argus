@@ -52,9 +52,14 @@ def _map_paper(paper: Any, rank: int, tool_name: str, latency_ms: int) -> Eviden
     if not title and not abstract:
         return None
     content = f"{title}\n{abstract}".strip()
-    url = paper.get("url")
-    source_ref = str(url) if url else f"radar:{paper.get('id', rank)}"
-    score = paper.get("score")
+    doi = str(paper.get("doi") or "").strip()
+    if doi.startswith("http"):
+        source_ref = doi
+    elif "/" in doi:
+        source_ref = f"https://doi.org/{doi.lstrip('/')}"
+    else:
+        source_ref = f"radar:{paper.get('id', rank)}"
+    score = paper.get("score", paper.get("similarity_score"))
     if isinstance(score, (int, float)) and not isinstance(score, bool):
         confidence = _clamp_confidence(score, 1.0 / (rank + 1))
     else:
@@ -133,7 +138,7 @@ class RadarSearchTool(BaseTool):
     async def run(self, query: str, params: dict[str, Any] | None = None) -> ToolResult:
         del params
         url = f"{settings.radar_base_url}/papers"
-        return await _get_papers(url, {"q": query, "limit": RADAR_LIMIT}, self.name)
+        return await _get_papers(url, {"q": query, "page_size": RADAR_LIMIT}, self.name)
 
 
 class RadarSimilarTool(BaseTool):
