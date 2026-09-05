@@ -131,6 +131,31 @@ LOOP_STOPS = Counter(
     "Investigation loop endings by stop reason.",
     ["reason"],
 )
+SYNTHESIS_TOTAL = Counter(
+    "argus_synthesis_total",
+    "Milestone synthesis runs by outcome.",
+    ["status"],
+)
+SYNTHESIS_LATENCY = Histogram(
+    "argus_synthesis_latency_seconds",
+    "Milestone synthesis latency in seconds.",
+    buckets=(2.5, 5, 10, 30, 60, 120, 300),
+)
+TIME_TO_USEFUL_ANSWER = Histogram(
+    "argus_time_to_useful_answer_seconds",
+    "Seconds from investigation creation to first milestone synthesis.",
+    buckets=(5, 10, 30, 60, 120, 300, 600),
+)
+TIME_TO_FINAL_REPORT = Histogram(
+    "argus_time_to_final_report_seconds",
+    "Seconds from investigation creation to COMPLETE.",
+    buckets=(10, 30, 60, 120, 300, 600, 1200),
+)
+BUS_DROPS = Counter(
+    "argus_investigation_bus_drops_total",
+    "Investigation bus events dropped per slow subscriber.",
+    ["event"],
+)
 
 
 def record_role_outcome(role: str, connector_id: str, status: str, latency_ms: int) -> None:

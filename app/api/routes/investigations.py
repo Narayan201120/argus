@@ -3,6 +3,7 @@
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from app.analysis.loop import run_investigation_loop
+from app.analysis.synthesis import synthesis_store
 from app.api.schemas import (
     BoardCounts,
     CancelInvestigationResponse,
@@ -39,6 +40,7 @@ async def read_investigation(investigation_id: str) -> InvestigationBoardRespons
         raise HTTPException(status_code=404, detail="Investigation not found.")
     evidence = list(investigation.board.evidence)
     claims = list(investigation.board.claims)
+    syntheses = await synthesis_store.load(investigation_id)
     return InvestigationBoardResponse(
         investigation_id=investigation.id,
         user_id=investigation.user_id,
@@ -52,6 +54,7 @@ async def read_investigation(investigation_id: str) -> InvestigationBoardRespons
         claims=claims,
         counts=BoardCounts(evidence=len(evidence), claims=len(claims)),
         truncated=False,
+        syntheses=syntheses,
     )
 
 

@@ -120,9 +120,10 @@ def test_get_unknown_returns_404() -> None:
 # ── Cancel ────────────────────────────────────────────────────────────────────
 
 
-def test_cancel_is_idempotent_and_visible_on_get() -> None:
-    created = client.post("/v1/investigate", json={"query": "cancel me"})
-    inv_id: str = created.json()["investigation_id"]
+async def test_cancel_is_idempotent_and_visible_on_get() -> None:
+    # Created at manager level: no background loop races the cancel.
+    inv = await manager.create("cancel me", "local")
+    inv_id = inv.id
     try:
         first = client.post(f"/v1/investigate/{inv_id}/cancel")
         assert first.status_code == 200
@@ -267,13 +268,12 @@ async def test_illegal_transition_raises() -> None:
 # ── No authorization branching ────────────────────────────────────────────────
 
 
-def test_read_and_cancel_ignore_user_id() -> None:
-    alice = client.post("/v1/investigate", json={"query": "alice query", "user_id": "alice"})
-    local = client.post("/v1/investigate", json={"query": "local query"})
-    assert alice.status_code == 202
-    assert local.status_code == 202
-    alice_id: str = alice.json()["investigation_id"]
-    local_id: str = local.json()["investigation_id"]
+async def test_read_and_cancel_ignore_user_id() -> None:
+    # Manager-level creation keeps the rows pre-loop so cancels are deterministic.
+    alice_inv = await manager.create("alice query", "alice")
+    local_inv = await manager.create("local query", "local")
+    alice_id = alice_inv.id
+    local_id = local_inv.id
     try:
         # Cross-identity reads succeed; "local" grants nothing special, no 403/401 anywhere.
         for inv_id in (alice_id, local_id):

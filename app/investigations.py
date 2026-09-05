@@ -51,6 +51,9 @@ TRANSITIONS: dict[InvestigationStatus, set[InvestigationStatus]] = {
     InvestigationStatus.GATHERING: {
         InvestigationStatus.ANALYZING,
         InvestigationStatus.CANCELLED,
+        # P4-3: milestone synthesis concludes gathering straight into COMPLETE;
+        # the final synthesis runs off the gathered board, so no ANALYZING hop.
+        InvestigationStatus.COMPLETE,
         InvestigationStatus.FAILED,
         InvestigationStatus.BUDGET_EXHAUSTED,
     },

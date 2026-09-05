@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { getModels, getRouting, postFeedback, speakText, streamQuery, transcribeAudio } from './api'
+import { startInvestigation } from './investigate'
+import InvestigationView from './InvestigationView'
 import type {
   ModelInfo,
   QueryEnvelope,
@@ -86,6 +88,11 @@ export default function App() {
   const [transcribing, setTranscribing] = useState(false)
   const [speakingKey, setSpeakingKey] = useState<string | null>(null)
   const [ratings, setRatings] = useState<Record<string, number>>({})
+  const [mode, setMode] = useState<'chat' | 'investigate'>('chat')
+  const [investigationId, setInvestigationId] = useState<string | null>(null)
+  const [invQuery, setInvQuery] = useState('')
+  const [invBusy, setInvBusy] = useState(false)
+  const [invFailure, setInvFailure] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -310,6 +317,21 @@ export default function App() {
     })
   }
 
+  async function submitInvestigation(text: string) {
+    if (!text || invBusy) return
+    setInvBusy(true)
+    setInvFailure(null)
+    try {
+      const created = await startInvestigation(text)
+      setInvQuery('')
+      setInvestigationId(created.investigation_id)
+    } catch (err) {
+      setInvFailure((err as Error).message)
+    } finally {
+      setInvBusy(false)
+    }
+  }
+
   return (
     <div className="app">
       <header>
@@ -329,6 +351,20 @@ export default function App() {
             title="Start a fresh conversation (new session id)"
           >
             New chat
+          </button>
+          <button
+            className={`chip ${mode === 'chat' ? 'active' : ''}`}
+            onClick={() => setMode('chat')}
+            title="Ask mode (existing chat flow)"
+          >
+            Chat
+          </button>
+          <button
+            className={`chip ${mode === 'investigate' ? 'active' : ''}`}
+            onClick={() => setMode('investigate')}
+            title="Deep-research investigation mode"
+          >
+            Investigate
           </button>
           <button
             className={`chip ${voiceOut ? 'active' : ''}`}
@@ -377,6 +413,31 @@ export default function App() {
         </span>
       </div>
 
+      {mode === 'investigate' ? (
+        <main className="thread">
+          {investigationId ? (
+            <InvestigationView investigationId={investigationId} onClose={() => setInvestigationId(null)} />
+          ) : (
+            <div className="bubble inv-start">
+              <div className="waiting">Deep research: start an investigation, then watch evidence, claims and the report arrive live.</div>
+              <textarea
+                value={invQuery}
+                placeholder="What should ARGUS investigate?"
+                onChange={(e) => setInvQuery(e.target.value)}
+                rows={3}
+                disabled={invBusy}
+              />
+              {invFailure && <div className="failure">{invFailure}</div>}
+              <div className="recover">
+                <button onClick={() => submitInvestigation(invQuery.trim())} disabled={invBusy || !invQuery.trim()}>
+                  {invBusy ? 'Starting…' : 'Start investigation'}
+                </button>
+              </div>
+            </div>
+          )}
+        </main>
+      ) : (
+      <>
       <main className="thread">
         {messages.length === 0 && (
           <div className="empty">Ask ARGUS anything. Complex questions run researcher/analyzer/verifier in parallel.</div>
@@ -512,6 +573,8 @@ export default function App() {
           </button>
         )}
       </footer>
+      </>
+      )}
     </div>
   )
 }

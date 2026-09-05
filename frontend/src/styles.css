@@ -198,3 +198,21 @@ footer .stop { border-color: #f85149; color: #ff7b72; }
 
 .rate .star.on { color: #e8b93f; }
 .rate .hint { margin-right: 2px; }
+
+.inv { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.inv-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.inv-query { font-weight: 600; flex: 1; min-width: 180px; }
+.inv-grid { display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 10px; width: 100%; }
+.inv-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.inv-col h3 { margin: 0; font-size: 12px; color: #8b90a0; text-transform: uppercase; letter-spacing: 1px; }
+.inv-item { background: #171a23; border: 1px solid #2c3040; border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+.inv-item .ref { color: #7aa2ff; font-size: 11px; margin-bottom: 4px; }
+.inv-item.contested { border-color: #f85149; }
+.inv-item .claim-status { color: #aab0c0; font-size: 11px; }
+.inv-item.contested .claim-status { color: #ff7b72; font-weight: 700; }
+.inv-report { white-space: pre-wrap; line-height: 1.55; font-size: 13px; }
+.inv-actions { display: flex; gap: 8px; align-items: center; }
+.inv-actions .stop { border-color: #f85149; color: #ff7b72; }
+.inv-start { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.inv-start textarea { width: 100%; }
+@media (max-width: 800px) { .inv-grid { grid-template-columns: 1fr; } }

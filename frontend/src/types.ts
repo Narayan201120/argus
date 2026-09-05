@@ -60,3 +60,90 @@ export interface QueryOptions {
   router_strategy?: string
   timeout_s?: number
 }
+
+// P4-3 investigation view types (append-only; existing types above are untouched).
+
+export type InvestigationStatus =
+  | 'planned'
+  | 'gathering'
+  | 'analyzing'
+  | 'synthesizing'
+  | 'complete'
+  | 'cancelled'
+  | 'failed'
+  | 'budget_exhausted'
+
+export interface InvestigationEvidence {
+  id: string
+  source_ref: string
+  content: string
+  type: string
+  confidence: number
+}
+
+export interface InvestigationClaim {
+  id: string
+  statement: string
+  confidence: number
+  evidence_ids: string[]
+  status: string
+}
+
+export interface InvestigationSynthesis {
+  milestone: string
+  markdown: string
+  final: boolean
+  created_at: number
+}
+
+export interface InvestigationCounts {
+  evidence: number
+  claims: number
+}
+
+export interface InvestigationBoard {
+  investigation_id: string
+  user_id: string
+  query: string
+  status: string
+  status_reason: string | null
+  created_at: number
+  updated_at: number
+  schema_version: string
+  evidence: InvestigationEvidence[]
+  claims: InvestigationClaim[]
+  counts: InvestigationCounts
+  truncated: boolean
+  syntheses: InvestigationSynthesis[]
+}
+
+export interface InvestigationCreated {
+  investigation_id: string
+  user_id: string
+  status: string
+  status_reason?: string | null
+}
+
+export interface InvestigationCancelResult {
+  investigation_id: string
+  user_id: string
+  status: string
+  status_reason: string | null
+}
+
+export interface InvestigationTerminalEvent {
+  status: string
+  reason: string | null
+}
+
+export interface InvestigationStreamHandlers {
+  onBoardSnapshot?: (board: InvestigationBoard) => void
+  onRoundStarted?: (round: number) => void
+  onEvidenceAdded?: (evidence: InvestigationEvidence) => void
+  onClaimsUpdated?: (claims: InvestigationClaim[]) => void
+  onSynthesisStart?: (milestone: string) => void
+  onSynthesisToken?: (delta: string) => void
+  onSynthesisEnd?: (milestone: string) => void
+  onTerminal?: (event: InvestigationTerminalEvent) => void
+  onError?: (message: string) => void
+}

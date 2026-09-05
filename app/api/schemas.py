@@ -182,6 +182,7 @@ class ReportJobStatus(BaseModel):
 
 
 # P4-0 investigate API schemas (append-only section; existing classes above are untouched).
+from app.analysis.synthesis import SynthesisRecord  # noqa: E402
 from app.evidence.models import (  # noqa: E402
     Claim,
     Evidence,
@@ -221,6 +222,8 @@ class InvestigationBoardResponse(BaseModel):
     claims: list[Claim]
     counts: BoardCounts
     truncated: bool
+    # P4-3 additive field (locked decision): milestone syntheses, oldest first.
+    syntheses: list[SynthesisRecord] = Field(default_factory=list)
 
 
 class CancelInvestigationResponse(BaseModel):

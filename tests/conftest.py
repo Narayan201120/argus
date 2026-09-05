@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from app.analysis import workers as analysis_workers
@@ -32,6 +34,43 @@ def _no_live_analysis_workers(monkeypatch):
     monkeypatch.setattr(analysis_workers, "analyze_board", _analyze)
     monkeypatch.setattr(analysis_workers, "critique_board", _critique)
     monkeypatch.setattr(analysis_workers, "assess_gaps", _assess)
+
+
+@pytest.fixture
+def scripted_milestone(monkeypatch):
+    """Opt-in: replace the LLM milestone with a storing fake.
+
+    The fake appends a real SynthesisRecord per call (milestone, final,
+    markdown) through synthesis_store, so board/GET/SSE assertions see a
+    faithful report trail with zero LLM cost. Returns the list of
+    (milestone, final) calls in order. Tests covering the real
+    synthesize_board/run_milestone live in test_synthesis.py.
+    """
+    import app.analysis.synthesis as synthesis_module
+    from app.analysis.synthesis import SynthesisRecord, synthesis_store
+
+    calls: list[tuple[int, bool]] = []
+
+    async def _fake_milestone(
+        investigation_id: str, milestone: int, final: bool
+    ) -> str | None:
+        calls.append((milestone, final))
+        records = await synthesis_store.load(investigation_id)
+        records.append(
+            SynthesisRecord(
+                milestone=milestone,
+                markdown=f"# scripted milestone {milestone}",
+                final=final,
+                created_at=time.time(),
+            )
+        )
+        await synthesis_store.save_all(
+            investigation_id, records, settings.investigation_ttl_s
+        )
+        return f"# scripted milestone {milestone}"
+
+    monkeypatch.setattr(synthesis_module, "run_milestone", _fake_milestone)
+    return calls
 
 
 class MockConnector(BaseConnector):

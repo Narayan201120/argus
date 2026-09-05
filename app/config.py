@@ -79,6 +79,8 @@ class Settings(BaseSettings):
 
     # Analysis workers (Phase 4 P4-2, DEC-053; empty = first available connector)
     analysis_connector_id: str = ""
+    # Milestone synthesis (Phase 4 P4-3; empty = first available connector)
+    synthesis_connector_id: str = ""
 
     # Tracing (opt-in OpenTelemetry)
     tracing_enabled: bool = False

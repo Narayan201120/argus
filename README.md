@@ -60,6 +60,7 @@ The API is available at `http://127.0.0.1:8000`, with interactive docs at `/docs
 - `POST /v1/investigate` - start a deep-research investigation (202 + ID immediately; Phase 4)
 - `GET /v1/investigate/{id}` - full Evidence Board: investigation, evidence, claims, counts
 - `POST /v1/investigate/{id}/cancel` - stop an investigation; board snapshot is kept
+- `GET /v1/investigate/{id}/stream` - SSE: board snapshot then live round/evidence/claim/synthesis events to terminal
 
 Example request:
 

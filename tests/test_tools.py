@@ -403,8 +403,8 @@ def test_rag_disabled_without_creds(monkeypatch: pytest.MonkeyPatch) -> None:
 # ── Route integration ───────────────────────────────────────────────────────
 
 
-def test_route_schedules_opening_round_and_parks_in_gathering(
-    monkeypatch: pytest.MonkeyPatch,
+def test_route_runs_loop_and_completes(
+    monkeypatch: pytest.MonkeyPatch, scripted_milestone: list[tuple[int, bool]]
 ) -> None:
     monkeypatch.setattr(settings, "radar_integration_enabled", False)
     monkeypatch.setattr(settings, "rag_integration_enabled", False)
@@ -414,16 +414,18 @@ def test_route_schedules_opening_round_and_parks_in_gathering(
     inv_id: str = resp.json()["investigation_id"]
     try:
         body: dict[str, Any] = {}
-        deadline = time.time() + 2.0
+        deadline = time.time() + 5.0
         while True:
             got = client.get(f"/v1/investigate/{inv_id}")
             assert got.status_code == 200
             body = got.json()
-            if body["status"] == "gathering" or time.time() >= deadline:
+            if body["status"] == "complete" or time.time() >= deadline:
                 break
             time.sleep(0.05)
-        assert body["status"] == "gathering"
+        assert body["status"] == "complete"
+        assert body["status_reason"] == "sufficient_evidence"
         assert body["counts"] == {"evidence": 0, "claims": 0}
+        assert len(body["syntheses"]) == 1
     finally:
         client.post(f"/v1/investigate/{inv_id}/cancel")
 

@@ -227,7 +227,7 @@ def test_board_empty_renders_prompt() -> None:
 
 @pytest.mark.asyncio
 async def test_gap_driven_seeding_routes_followup_queries(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, scripted_milestone: list[tuple[int, bool]]
 ) -> None:
     mgr = _fresh_manager(monkeypatch)
     radar = FakeTool("radar_search", unique_per_call=True)
@@ -257,7 +257,9 @@ async def test_gap_driven_seeding_routes_followup_queries(
         assert rag.queries == ["original query text", "gap-rag-q"]
         loaded = await mgr.get(inv.id)
         assert loaded is not None
-        assert loaded.status == InvestigationStatus.GATHERING
+        assert loaded.status == InvestigationStatus.COMPLETE
+        assert loaded.status_reason == StatusReason.SUFFICIENT_EVIDENCE
+        assert scripted_milestone == [(0, False), (1, True)]
     finally:
         await mgr.cancel(inv.id)
 
@@ -266,8 +268,8 @@ async def test_gap_driven_seeding_routes_followup_queries(
 
 
 @pytest.mark.asyncio
-async def test_sufficient_after_round_zero_parks_gathering(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_sufficient_after_round_zero_completes(
+    monkeypatch: pytest.MonkeyPatch, scripted_milestone: list[tuple[int, bool]]
 ) -> None:
     mgr = _fresh_manager(monkeypatch)
     _use_registry(
@@ -287,9 +289,10 @@ async def test_sufficient_after_round_zero_parks_gathering(
         await run_investigation_loop(inv.id)
         loaded = await mgr.get(inv.id)
         assert loaded is not None
-        assert loaded.status == InvestigationStatus.GATHERING
-        assert loaded.status_reason is None
+        assert loaded.status == InvestigationStatus.COMPLETE
+        assert loaded.status_reason == StatusReason.SUFFICIENT_EVIDENCE
         assert loaded.usage.iterations_used == 1
+        assert scripted_milestone == [(0, True)]
         after = REGISTRY.get_sample_value("argus_loop_stops_total", labels) or 0.0
         assert after == before + 1.0
     finally:
@@ -336,7 +339,7 @@ async def test_iteration_cap_exhausts_budget(monkeypatch: pytest.MonkeyPatch) ->
 
 @pytest.mark.asyncio
 async def test_analyze_failure_recovers_and_runs_round_one(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, scripted_milestone: list[tuple[int, bool]]
 ) -> None:
     mgr = _fresh_manager(monkeypatch)
     radar = FakeTool("radar_search", unique_per_call=True)
@@ -375,14 +378,17 @@ async def test_analyze_failure_recovers_and_runs_round_one(
         assert radar.queries[1] == "gap-radar-q"
         loaded = await mgr.get(inv.id)
         assert loaded is not None
-        assert loaded.status == InvestigationStatus.GATHERING
+        assert loaded.status == InvestigationStatus.COMPLETE
+        assert loaded.status_reason == StatusReason.SUFFICIENT_EVIDENCE
         assert len(loaded.board.evidence) >= 2
     finally:
         await mgr.cancel(inv.id)
 
 
 @pytest.mark.asyncio
-async def test_gap_failure_ends_loop_with_gap_error(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_gap_failure_ends_loop_with_gap_error(
+    monkeypatch: pytest.MonkeyPatch, scripted_milestone: list[tuple[int, bool]]
+) -> None:
     mgr = _fresh_manager(monkeypatch)
     _use_registry(
         monkeypatch,
@@ -401,15 +407,22 @@ async def test_gap_failure_ends_loop_with_gap_error(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(workers_module, "assess_gaps", bad_gap)
     labels = {"reason": "gap_error"}
     before = REGISTRY.get_sample_value("argus_loop_stops_total", labels) or 0.0
+    sufficient_labels = {"reason": "sufficient"}
+    sufficient_before = REGISTRY.get_sample_value("argus_loop_stops_total", sufficient_labels) or 0.0
     inv = await mgr.create("gap error probe", "local")
     try:
         await run_investigation_loop(inv.id)
         loaded = await mgr.get(inv.id)
         assert loaded is not None
-        assert loaded.status == InvestigationStatus.GATHERING
+        assert loaded.status == InvestigationStatus.COMPLETE
+        assert loaded.status_reason == StatusReason.SUFFICIENT_EVIDENCE
         assert {e.source_ref for e in loaded.board.evidence} == {"r0", "r1"}
+        # Partial report still concludes: gap_error counted, sufficient not.
+        assert scripted_milestone == [(0, True)]
         after = REGISTRY.get_sample_value("argus_loop_stops_total", labels) or 0.0
         assert after == before + 1.0
+        sufficient_after = REGISTRY.get_sample_value("argus_loop_stops_total", sufficient_labels) or 0.0
+        assert sufficient_after == sufficient_before
     finally:
         await mgr.cancel(inv.id)
 
@@ -611,7 +624,9 @@ async def test_cancel_mid_loop_no_second_followup(monkeypatch: pytest.MonkeyPatc
 # ── Route integration ───────────────────────────────────────────────────────
 
 
-def test_route_investigate_parks_with_scripted_claim(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_route_investigate_completes_with_scripted_claim(
+    monkeypatch: pytest.MonkeyPatch, scripted_milestone: list[tuple[int, bool]]
+) -> None:
     monkeypatch.setattr(settings, "radar_integration_enabled", False)
     monkeypatch.setattr(settings, "rag_integration_enabled", False)
     monkeypatch.setattr(settings, "web_tools_enabled", False)
@@ -630,16 +645,19 @@ def test_route_investigate_parks_with_scripted_claim(monkeypatch: pytest.MonkeyP
     inv_id: str = resp.json()["investigation_id"]
     try:
         body: dict[str, Any] = {}
-        deadline = time.time() + 3.0
+        deadline = time.time() + 5.0
         while True:
             got = client.get(f"/v1/investigate/{inv_id}")
             assert got.status_code == 200
             body = got.json()
             statements = [c["statement"] for c in body["claims"]]
-            if body["status"] == "gathering" and "route-scripted-claim" in statements:
+            if body["status"] == "complete" and "route-scripted-claim" in statements:
                 break
-            assert time.time() < deadline, "loop did not park with scripted claim in time"
+            assert time.time() < deadline, "loop did not complete with scripted claim in time"
             time.sleep(0.05)
-        assert body["status"] == "gathering"
+        assert body["status"] == "complete"
+        assert body["status_reason"] == "sufficient_evidence"
+        assert scripted_milestone == [(0, True)]
+        assert len(body["syntheses"]) == 1
     finally:
         client.post(f"/v1/investigate/{inv_id}/cancel")
