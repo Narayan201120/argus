@@ -1,6 +1,6 @@
 # ARGUS Project Map
 
-Last updated: September 7, 2026 (v0.5.1 - live-smoke follow-up)
+Last updated: September 7, 2026 (v0.5.2 - stall-break follow-up)
 
 ## Current Stage
 

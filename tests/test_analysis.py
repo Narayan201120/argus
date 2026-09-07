@@ -663,6 +663,71 @@ def test_route_investigate_completes_with_scripted_claim(
         client.post(f"/v1/investigate/{inv_id}/cancel")
 
 
+# ── Persistent worker failure cap ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_persistent_analysis_failure_concludes_nonempty_board(
+    monkeypatch: pytest.MonkeyPatch, scripted_milestone: list[tuple[int, bool]]
+) -> None:
+    import time as _time
+
+    mgr = _fresh_manager(monkeypatch)
+    inv = await mgr.create("stall probe query", "local")
+    try:
+        seed = Evidence(
+            id="ev-stall-1",
+            investigation_id=inv.id,
+            source_ref="stall-ref",
+            content="stall content",
+            type="text",
+            confidence=0.8,
+            created_at=_time.time(),
+        )
+        assert await mgr.add_evidence(inv.id, seed) is not None
+
+        async def always_fail(board_text: str, query: str) -> AnalysisOutput:
+            del board_text, query
+            raise WorkerError("provider_error: all down")
+
+        monkeypatch.setattr(workers_module, "analyze_board", always_fail)
+        await run_investigation_loop(inv.id)
+        loaded = await mgr.get(inv.id)
+        assert loaded is not None
+        assert loaded.status == InvestigationStatus.COMPLETE
+        assert loaded.status_reason == StatusReason.SUFFICIENT_EVIDENCE
+        assert scripted_milestone == [(0, True)]
+    finally:
+        await mgr.cancel(inv.id)
+
+
+@pytest.mark.asyncio
+async def test_persistent_analysis_failure_fails_empty_board(
+    monkeypatch: pytest.MonkeyPatch, scripted_milestone: list[tuple[int, bool]]
+) -> None:
+    mgr = _fresh_manager(monkeypatch)
+    _use_registry(monkeypatch, {"radar_search": FakeTool("radar_search", enabled=False)})
+    async def always_fail(board_text: str, query: str) -> AnalysisOutput:
+        del board_text, query
+        raise WorkerError("provider_error: all down")
+
+    monkeypatch.setattr(workers_module, "analyze_board", always_fail)
+    labels = {"reason": "provider_failure"}
+    before = REGISTRY.get_sample_value("argus_loop_stops_total", labels) or 0.0
+    inv = await mgr.create("empty stall probe query", "local")
+    try:
+        await run_investigation_loop(inv.id)
+        loaded = await mgr.get(inv.id)
+        assert loaded is not None
+        assert loaded.status == InvestigationStatus.FAILED
+        assert loaded.status_reason == StatusReason.PROVIDER_FAILURE
+        assert scripted_milestone == []
+        after = REGISTRY.get_sample_value("argus_loop_stops_total", labels) or 0.0
+        assert after == before + 1.0
+    finally:
+        await mgr.cancel(inv.id)
+
+
 # ── Dupe-only follow-up survives (P4-5 follow-up) ───────────────────────────
 
 

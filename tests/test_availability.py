@@ -199,3 +199,43 @@ def test_models_output_carries_demoted_fields(monkeypatch):
     entry = next(c for c in data["connectors"] if c["connector_id"] == "openai")
     assert entry["demoted"] is True
     assert entry["consecutive_auth_failures"] == 3
+
+
+# ── Analysis worker demotion wiring ─────────────────────────────────────────
+
+
+def test_worker_pick_skips_demoted(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.analysis.workers as workers_module
+
+    dead = _Stub("dead-llm")
+    live = _Stub("live-llm")
+    for _ in range(3):
+        record_auth_failure("dead-llm")
+    monkeypatch.setattr(workers_module.registry, "available", lambda: [dead, live])
+    assert workers_module._pick_connector() is live
+
+
+def test_worker_pick_pinned_demoted_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.analysis.workers as workers_module
+    from app.analysis.workers import WorkerError
+    from app.config import settings
+
+    dead = _Stub("dead-llm")
+    for _ in range(3):
+        record_auth_failure("dead-llm")
+    monkeypatch.setattr(workers_module.registry, "get", lambda _id: dead)
+    monkeypatch.setattr(settings, "analysis_connector_id", "dead-llm")
+    with pytest.raises(WorkerError, match="demoted"):
+        workers_module._pick_connector()
+
+
+def test_record_outcome_tracks_auth_and_success() -> None:
+    import app.analysis.workers as workers_module
+
+    bad = _resp(ConnectorStatus.ERROR, "401 Unauthorized")
+    workers_module._record_outcome("c9", bad)
+    assert consecutive_auth_failures("c9") == 1
+    ok = _resp(ConnectorStatus.SUCCESS)
+    workers_module._record_outcome("c9", ok)
+    assert consecutive_auth_failures("c9") == 0
+    assert is_demoted("c9") is False

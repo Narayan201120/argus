@@ -23,7 +23,9 @@ Locked decisions (do not change without a new DEC):
   continue the loop. An empty reservation (all tools disabled/missing/skipped)
   parks instead of failing.
 - Analysis/critique WorkerErrors are transient: the iteration is skipped and
-  retried until wall-clock/budget ends it. A gap WorkerError is fatal for the
+  retried until wall-clock/budget ends it. Three straight analysis misses
+  (MAX_CONSECUTIVE_ANALYSIS_FAILURES) break the stall: conclude a non-empty
+  board via final synthesis, or FAILED/PROVIDER_FAILURE an empty one. A gap WorkerError is fatal for the
   loop (gap_error stop) because without a gap verdict the loop can neither
   stop nor plan the next round. The transient-retry path awaits
   asyncio.sleep(0) so a hot in-memory mock spin still yields to the event
@@ -83,6 +85,8 @@ logger = get_logger(__name__)
 
 #: Cap on source_refs carried in one EVIDENCE_ADDED event.
 EVIDENCE_ADDED_MAX_REFS = 50
+
+MAX_CONSECUTIVE_ANALYSIS_FAILURES = 3
 
 T = TypeVar("T")
 
@@ -358,6 +362,7 @@ async def _run_loop(investigation_id: str) -> None:
             return
 
     milestone = 0
+    analysis_strikes = 0
     while True:
         cur = await manager.get(investigation_id)
         if cur is None:
@@ -390,8 +395,37 @@ async def _run_loop(investigation_id: str) -> None:
             worker="analysis",
         )
         if analysis is None:
+            # Tolerate transient worker failures, but a persistently unreadable
+            # board must end the loop instead of burning the wall clock: after
+            # MAX_CONSECUTIVE_ANALYSIS_FAILURES straight misses, conclude what
+            # exists (COMPLETE) or fail an empty board (FAILED/PROVIDER_FAILURE).
+            analysis_strikes += 1
+            if analysis_strikes >= MAX_CONSECUTIVE_ANALYSIS_FAILURES:
+                board_row = await manager.get(investigation_id)
+                if board_row is not None and len(board_row.board.evidence) > 0:
+                    await _finish(milestone, final=True)
+                    _stop("provider_failure", investigation_id)
+                    return
+                try:
+                    await manager.transition(
+                        investigation_id, InvestigationStatus.FAILED, StatusReason.PROVIDER_FAILURE
+                    )
+                except ValueError as exc:
+                    logger.warning(
+                        {
+                            "message": "Investigation loop: cannot mark PROVIDER_FAILURE",
+                            "investigation_id": investigation_id,
+                            "error": str(exc),
+                        }
+                    )
+                    await _publish_terminal_if_row_terminal()
+                    return
+                _stop("provider_failure", investigation_id)
+                await _publish_terminal_if_row_terminal()
+                return
             await asyncio.sleep(0)  # Yield so cancel/supervisor can fire on hot mock spins.
             continue
+        analysis_strikes = 0
         critique = await _guard(
             workers_module.critique_board(
                 board_text, query, **_worker_kwargs(workers_module.critique_board, investigation_id)
