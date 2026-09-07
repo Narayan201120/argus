@@ -9,7 +9,13 @@ from app.connectors.availability import (
     record_auth_failure,
     record_success,
 )
-from app.connectors.base import ConnectorConfig, ConnectorResponse, ConnectorStatus, TokenUsage
+from app.connectors.base import (
+    BaseConnector,
+    ConnectorConfig,
+    ConnectorResponse,
+    ConnectorStatus,
+    TokenUsage,
+)
 from app.connectors.registry import registry
 from app.main import app
 from app.orchestration.binding import RoleBindingService, RoutingConfig
@@ -25,12 +31,18 @@ def _clean_availability():
     availability.reset_all()
 
 
-class _Stub:
+class _Stub(BaseConnector):
     def __init__(self, connector_id: str):
         self.connector_id = connector_id
         self.display_name = f"{connector_id.title()} Stub"
         self.capabilities = ["text"]
         self.is_available = True
+
+    async def query(self, prompt, sub_query, config):
+        raise NotImplementedError
+
+    async def health_check(self):
+        return self.is_available
 
 
 def _resp(status: ConnectorStatus, error: str | None = None) -> ConnectorResponse:
@@ -166,7 +178,7 @@ def _service() -> RoleBindingService:
 
 def test_selection_skips_demoted():
     svc = _service()
-    active = [_Stub("openai"), _Stub("mistral")]
+    active: list[BaseConnector] = [_Stub("openai"), _Stub("mistral")]
     for _ in range(3):
         record_auth_failure("openai")
     picked = svc.select_connector(active, "analyzer")
@@ -175,7 +187,7 @@ def test_selection_skips_demoted():
 
 def test_all_demoted_falls_through_without_raising():
     svc = _service()
-    active = [_Stub("openai"), _Stub("mistral")]
+    active: list[BaseConnector] = [_Stub("openai"), _Stub("mistral")]
     for cid in ("openai", "mistral"):
         for _ in range(3):
             record_auth_failure(cid)
@@ -239,3 +251,157 @@ def test_record_outcome_tracks_auth_and_success() -> None:
     workers_module._record_outcome("c9", ok)
     assert consecutive_auth_failures("c9") == 0
     assert is_demoted("c9") is False
+
+
+# ── Query-pipeline synthesis demotion wiring (mock-only) ──────────────────────
+
+
+class _SynthOkConnector(_Stub):
+    """Scripted synthesizer succeeding via query() and stream_query()."""
+
+    def __init__(self, connector_id: str, content: str = "synth-answer"):
+        super().__init__(connector_id)
+        self.calls = 0
+        self._content = content
+
+    async def query(self, prompt, sub_query, config):
+        self.calls += 1
+        return ConnectorResponse(
+            model_id="m", content=self._content, latency_ms=1,
+            token_usage=TokenUsage(), status=ConnectorStatus.SUCCESS,
+        )
+
+    async def stream_query(self, prompt, sub_query, config):
+        self.calls += 1
+        yield self._content
+
+    async def health_check(self):
+        return True
+
+
+class _SynthAuthFailConnector(_Stub):
+    """Scripted synthesizer failing AUTH-class on both paths.
+
+    query() returns a 401 response; stream_query() raises 401, mirroring
+    the native-streaming connector behavior (no ConnectorResponse wrapper).
+    """
+
+    def __init__(self, connector_id: str):
+        super().__init__(connector_id)
+        self.calls = 0
+
+    async def query(self, prompt, sub_query, config):
+        self.calls += 1
+        return _resp(ConnectorStatus.ERROR, "401 invalid_api_key")
+
+    async def stream_query(self, prompt, sub_query, config):
+        self.calls += 1
+        raise RuntimeError("401 Unauthorized")
+        yield "unreachable"
+
+    async def health_check(self):
+        return True
+
+
+def _synth_bundle() -> dict[str, ConnectorResponse]:
+    # Two successful non-role entries force the synthesis chain
+    # (a single success short-circuits without touching any synthesizer).
+    return {
+        "extra-a": _resp(ConnectorStatus.SUCCESS),
+        "extra-b": _resp(ConnectorStatus.SUCCESS),
+    }
+
+
+async def test_synthesis_skips_demoted():
+    from app.orchestration.aggregator import synthesize
+
+    dead = _SynthOkConnector("synth-dead")
+    live = _SynthOkConnector("synth-live", "live-answer")
+    for _ in range(3):
+        record_auth_failure("synth-dead")
+    content, used, _ = await synthesize("q", _synth_bundle(), [dead, live], ConnectorConfig())
+    assert used == "synth-live"
+    assert content == "live-answer"
+    assert dead.calls == 0
+    assert live.calls == 1
+
+
+async def test_synthesis_records_auth_failures_until_demoted():
+    from app.orchestration.aggregator import synthesize
+
+    bad = _SynthAuthFailConnector("synth-flaky")
+    bundle = _synth_bundle()
+    for _ in range(3):
+        content, used, _ = await synthesize("q", bundle, [bad], ConnectorConfig())
+        assert used == "fallback_concat"
+    assert consecutive_auth_failures("synth-flaky") == 3
+    assert is_demoted("synth-flaky") is True
+
+    # Visible on binding selection skip.
+    svc = _service()
+    picked = svc.select_connector([_Stub("synth-flaky"), _Stub("synth-fresh")], "analyzer")
+    assert picked.connector_id == "synth-fresh"
+
+    # ... and on the synthesis path itself afterwards.
+    live = _SynthOkConnector("synth-fresh", "fresh-answer")
+    content, used, _ = await synthesize("q", bundle, [bad, live], ConnectorConfig())
+    assert used == "synth-fresh"
+    assert content == "fresh-answer"
+    assert bad.calls == 3
+    assert live.calls == 1
+
+
+async def test_synthesis_success_resets():
+    from app.orchestration.aggregator import synthesize
+
+    bad = _SynthAuthFailConnector("synth-reset")
+    bundle = _synth_bundle()
+    for _ in range(2):
+        await synthesize("q", bundle, [bad], ConnectorConfig())
+    assert consecutive_auth_failures("synth-reset") == 2
+
+    ok = _SynthOkConnector("synth-reset", "recovered")
+    content, used, _ = await synthesize("q", bundle, [ok], ConnectorConfig())
+    assert used == "synth-reset"
+    assert content == "recovered"
+    assert consecutive_auth_failures("synth-reset") == 0
+    assert is_demoted("synth-reset") is False
+
+
+async def test_synthesis_stream_skips_demoted_and_records_success():
+    from app.orchestration.aggregator import synthesize_stream
+
+    dead = _SynthOkConnector("synth-sdead")
+    live = _SynthOkConnector("synth-slive", "live-chunk")
+    for _ in range(3):
+        record_auth_failure("synth-sdead")
+    for _ in range(2):
+        record_auth_failure("synth-slive")
+    events = [
+        event
+        async for event in synthesize_stream("q", _synth_bundle(), [dead, live], ConnectorConfig())
+    ]
+    assert ("start", "synth-slive") in events
+    assert ("token", "live-chunk") in events
+    assert ("end", "synth-slive") in events
+    assert dead.calls == 0
+    # Streaming success resets the live connector's prior strikes.
+    assert consecutive_auth_failures("synth-slive") == 0
+    assert is_demoted("synth-slive") is False
+
+
+async def test_synthesis_stream_records_auth_exceptions_until_demoted():
+    from app.orchestration.aggregator import synthesize_stream
+
+    bad = _SynthAuthFailConnector("synth-sflaky")
+    for _ in range(3):
+        events = [
+            event
+            async for event in synthesize_stream(
+                "q", _synth_bundle(), [bad], ConnectorConfig()
+            )
+        ]
+        assert len(events) == 1
+        assert events[0][0] == "fallback_concat"
+    assert consecutive_auth_failures("synth-sflaky") == 3
+    assert is_demoted("synth-sflaky") is True

@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # App
     app_name: str = "ARGUS"
-    app_version: str = "0.5.2"
+    app_version: str = "0.5.3"
     debug: bool = False
 
     # Redis

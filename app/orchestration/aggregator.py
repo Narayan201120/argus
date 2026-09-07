@@ -4,6 +4,12 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from app.connectors.availability import (
+    is_auth_failure,
+    is_demoted,
+    record_auth_failure,
+    record_success,
+)
 from app.connectors.base import (
     BaseConnector,
     ConnectorConfig,
@@ -302,6 +308,56 @@ def _labeled_concat_fallback(
     return "\n".join(lines)
 
 
+def _record_outcome(connector_id: str, response: ConnectorResponse) -> None:
+    """Feed the demotion tracker; never raises (mirrors analysis workers)."""
+    try:
+        if response.status == ConnectorStatus.SUCCESS:
+            record_success(connector_id)
+        elif is_auth_failure(response.status.value, response.error):
+            record_auth_failure(connector_id)
+    except Exception:  # noqa: BLE001 - tracking must not break synthesis
+        pass
+
+
+def _record_stream_success(connector_id: str) -> None:
+    """Record a completed synthesis stream; never raises."""
+    try:
+        record_success(connector_id)
+    except Exception:  # noqa: BLE001 - tracking must not break synthesis
+        pass
+
+
+def _record_stream_exception(connector_id: str, exc: Exception) -> None:
+    """Classify a streaming failure as AUTH-class when possible; never raises."""
+    try:
+        if is_auth_failure("error", str(exc)):
+            record_auth_failure(connector_id)
+    except Exception:  # noqa: BLE001 - tracking must not break synthesis
+        pass
+
+
+def _effective_synthesizer_chain(
+    synthesizer_chain: list[BaseConnector],
+) -> list[BaseConnector]:
+    """Skip demoted synthesizers, mirroring binding selection behavior.
+
+    When every candidate is demoted, fall through with the full chain and
+    a loud log instead of failing the request.
+    """
+    try:
+        active = [c for c in synthesizer_chain if not is_demoted(c.connector_id)]
+    except Exception:  # noqa: BLE001 - demotion checks must not break synthesis
+        return list(synthesizer_chain)
+    if active or not synthesizer_chain:
+        return active
+    logger.warning({
+        "message": "All synthesizers demoted; falling through ignoring demotion",
+        "role": "synthesizer",
+        "demoted_skipped": sorted(c.connector_id for c in synthesizer_chain),
+    })
+    return list(synthesizer_chain)
+
+
 async def synthesize(
     original_query: str,
     response_bundle: dict[str, ConnectorResponse],
@@ -333,7 +389,7 @@ async def synthesize(
     system_prompt = _load_synthesis_prompt()
     synthesis_input = _build_synthesis_prompt(original_query, successful, system_prompt)
 
-    for synthesizer in synthesizer_chain:
+    for synthesizer in _effective_synthesizer_chain(synthesizer_chain):
         if not synthesizer.is_available:
             logger.info({
                 "message": "Synthesizer unavailable, trying next",
@@ -348,6 +404,7 @@ async def synthesize(
                 sub_query=synthesis_input,
                 config=config,
             )
+            _record_outcome(synthesizer.connector_id, response)
 
             if response.status == ConnectorStatus.SUCCESS and response.content:
                 logger.info({
@@ -415,7 +472,7 @@ async def synthesize_stream(
     system_prompt = _load_synthesis_prompt()
     synthesis_input = _build_synthesis_prompt(original_query, successful, system_prompt)
 
-    for synthesizer in synthesizer_chain:
+    for synthesizer in _effective_synthesizer_chain(synthesizer_chain):
         if not synthesizer.is_available:
             continue
         try:
@@ -432,6 +489,7 @@ async def synthesize_stream(
                     emitted_any = True
                 yield "token", delta
             if emitted_any:
+                _record_stream_success(synthesizer.connector_id)
                 yield "end", synthesizer.connector_id
                 return
             logger.warning({
@@ -439,6 +497,7 @@ async def synthesize_stream(
                 "synthesizer": synthesizer.connector_id,
             })
         except Exception as e:
+            _record_stream_exception(synthesizer.connector_id, e)
             logger.error({
                 "message": "Streaming synthesizer exception",
                 "synthesizer": synthesizer.connector_id,
