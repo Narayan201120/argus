@@ -462,3 +462,36 @@ async def test_fail_open_without_redis(monkeypatch: pytest.MonkeyPatch) -> None:
         assert [e.source_ref for e in loaded.board.evidence] == ["mem-ref"]
     finally:
         await mgr.cancel(inv.id)
+
+
+# ── Surviving-round signal (P4-5 follow-up) ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_ok_empty_round_reports_succeeded(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.tools import dispatch as dispatch_module
+
+    mgr = _fresh_manager(monkeypatch)
+    _use_registry(monkeypatch, {"radar_search": FakeTool("radar_search", items=[])})
+    inv = await mgr.create("empty ok probe", "local")
+    try:
+        result = await dispatch_module.run_tool_round(inv.id, [("radar_search", "q")])
+        assert result == (0, True, False, True)
+    finally:
+        await mgr.cancel(inv.id)
+
+
+@pytest.mark.asyncio
+async def test_all_error_round_reports_not_succeeded(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.tools import dispatch as dispatch_module
+
+    mgr = _fresh_manager(monkeypatch)
+    _use_registry(
+        monkeypatch, {"radar_search": FakeTool("radar_search", ok=False, error="boom")}
+    )
+    inv = await mgr.create("all error probe", "local")
+    try:
+        result = await dispatch_module.run_tool_round(inv.id, [("radar_search", "q")])
+        assert result == (0, True, False, False)
+    finally:
+        await mgr.cancel(inv.id)

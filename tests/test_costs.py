@@ -248,10 +248,10 @@ async def test_web_reserve_charges_search_cost(monkeypatch: pytest.MonkeyPatch) 
     _use_registry(monkeypatch, {"web_search": web})
     inv = await mgr.create("web reserve probe", "local")
     try:
-        written, attempted, stopped = await dispatch_module.run_tool_round(
+        written, attempted, stopped, succeeded = await dispatch_module.run_tool_round(
             inv.id, [("web_search", "reserve probe query")]
         )
-        assert (written, attempted, stopped) == (1, True, False)
+        assert (written, attempted, stopped, succeeded) == (1, True, False, True)
         assert web.calls == 1
         loaded = await mgr.get(inv.id)
         assert loaded is not None
@@ -271,10 +271,10 @@ async def test_web_capped_accumulates_no_cost(monkeypatch: pytest.MonkeyPatch) -
     before = REGISTRY.get_sample_value("argus_tool_calls_total", capped_labels) or 0.0
     inv = await mgr.create("web capped probe", "local")
     try:
-        written, attempted, stopped = await dispatch_module.run_tool_round(
+        written, attempted, stopped, succeeded = await dispatch_module.run_tool_round(
             inv.id, [("web_search", "capped probe query")]
         )
-        assert (written, attempted, stopped) == (0, False, False)
+        assert (written, attempted, stopped, succeeded) == (0, False, False, False)
         assert web.calls == 0
         after = REGISTRY.get_sample_value("argus_tool_calls_total", capped_labels) or 0.0
         assert after == before + 1.0

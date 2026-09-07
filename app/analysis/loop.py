@@ -17,8 +17,11 @@ Locked decisions (do not change without a new DEC):
   endings (sufficient, gap_error, provider_failure) and returns silently for
   budget/cancel/terminal detections owned elsewhere.
 - A tool round counts as provider failure only when at least one tool was
-  reserved yet nothing was written (written == 0 and attempted). An empty
-  reservation (all tools disabled/missing/skipped) parks instead of failing.
+  reserved yet nothing is usable: every tool errored, or the board is still
+  empty (fail fast on poisoned queries instead of burning LLM calls on
+  nothing). Rounds that answer with only duplicates on a non-empty board
+  continue the loop. An empty reservation (all tools disabled/missing/skipped)
+  parks instead of failing.
 - Analysis/critique WorkerErrors are transient: the iteration is skipped and
   retried until wall-clock/budget ends it. A gap WorkerError is fatal for the
   loop (gap_error stop) because without a gap verdict the loop can neither
@@ -251,6 +254,25 @@ async def _run_loop(investigation_id: str) -> None:
         terminal_published = True
         return True
 
+    async def _mark_provider_failure() -> None:
+        """Mark FAILED/PROVIDER_FAILURE and broadcast it."""
+        try:
+            await manager.transition(
+                investigation_id, InvestigationStatus.FAILED, StatusReason.PROVIDER_FAILURE
+            )
+        except ValueError as exc:
+            logger.warning(
+                {
+                    "message": "Investigation loop: cannot mark PROVIDER_FAILURE",
+                    "investigation_id": investigation_id,
+                    "error": str(exc),
+                }
+            )
+            await _publish_terminal_if_row_terminal()
+            return
+        _stop("provider_failure", investigation_id)
+        await _publish_terminal_if_row_terminal()
+
     async def _finish(milestone: int, *, final: bool) -> bool:
         """Store one synthesis milestone, then conclude gathering as COMPLETE.
 
@@ -321,7 +343,7 @@ async def _run_loop(investigation_id: str) -> None:
         events_module.ROUND_STARTED,
         {"round": inv.usage.iterations_used, "queries": [planned_query for _, planned_query in baseline]},
     )
-    written, attempted, stopped = await dispatch_module.run_tool_round(investigation_id, baseline)
+    written, attempted, stopped, succeeded = await dispatch_module.run_tool_round(investigation_id, baseline)
     await _emit_evidence_added(
         investigation_id, pre_round_evidence, await manager.get(investigation_id)
     )
@@ -329,23 +351,11 @@ async def _run_loop(investigation_id: str) -> None:
         await _publish_terminal_if_row_terminal()
         return
     if written == 0 and attempted:
-        try:
-            await manager.transition(
-                investigation_id, InvestigationStatus.FAILED, StatusReason.PROVIDER_FAILURE
-            )
-        except ValueError as exc:
-            logger.warning(
-                {
-                    "message": "Investigation loop: cannot mark PROVIDER_FAILURE",
-                    "investigation_id": investigation_id,
-                    "error": str(exc),
-                }
-            )
-            await _publish_terminal_if_row_terminal()
+        row = await manager.get(investigation_id)
+        board_empty = row is None or len(row.board.evidence) == 0
+        if not succeeded or board_empty:
+            await _mark_provider_failure()
             return
-        _stop("provider_failure", investigation_id)
-        await _publish_terminal_if_row_terminal()
-        return
 
     milestone = 0
     while True:
@@ -527,7 +537,7 @@ async def _run_loop(investigation_id: str) -> None:
             events_module.ROUND_STARTED,
             {"round": grown.usage.iterations_used, "queries": [gap.radar_query, gap.rag_query]},
         )
-        written, attempted, stopped = await dispatch_module.run_tool_round(
+        written, attempted, stopped, succeeded = await dispatch_module.run_tool_round(
             investigation_id, planned
         )
         await _emit_evidence_added(
@@ -537,21 +547,9 @@ async def _run_loop(investigation_id: str) -> None:
             await _publish_terminal_if_row_terminal()
             return
         if written == 0 and attempted:
-            try:
-                await manager.transition(
-                    investigation_id, InvestigationStatus.FAILED, StatusReason.PROVIDER_FAILURE
-                )
-            except ValueError as exc:
-                logger.warning(
-                    {
-                        "message": "Investigation loop: cannot mark PROVIDER_FAILURE",
-                        "investigation_id": investigation_id,
-                        "error": str(exc),
-                    }
-                )
-                await _publish_terminal_if_row_terminal()
+            row = await manager.get(investigation_id)
+            board_empty = row is None or len(row.board.evidence) == 0
+            if not succeeded or board_empty:
+                await _mark_provider_failure()
                 return
-            _stop("provider_failure", investigation_id)
-            await _publish_terminal_if_row_terminal()
-            return
         # Otherwise grow: loop around for the next analyze round.

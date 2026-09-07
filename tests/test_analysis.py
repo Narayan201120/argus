@@ -661,3 +661,49 @@ def test_route_investigate_completes_with_scripted_claim(
         assert len(body["syntheses"]) == 1
     finally:
         client.post(f"/v1/investigate/{inv_id}/cancel")
+
+
+# ── Dupe-only follow-up survives (P4-5 follow-up) ───────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dupe_only_followup_continues_to_complete(
+    monkeypatch: pytest.MonkeyPatch, scripted_milestone: list[tuple[int, bool]]
+) -> None:
+    mgr = _fresh_manager(monkeypatch)
+    _use_registry(
+        monkeypatch,
+        {
+            "radar_search": FakeTool("radar_search", items=[_payload("dup-ref")]),
+            "rag_retrieve": FakeTool("rag_retrieve", items=[]),
+        },
+    )
+    monkeypatch.setattr(workers_module, "analyze_board", _empty_analyze)
+    monkeypatch.setattr(workers_module, "critique_board", _empty_critique)
+    gap_calls: dict[str, int] = {"n": 0}
+
+    async def dupe_gap(board_text: str, query: str) -> GapOutput:
+        del board_text, query
+        gap_calls["n"] += 1
+        if gap_calls["n"] == 1:
+            return GapOutput(
+                sufficient=False,
+                radar_query="same topic again",
+                rag_query="",
+                rationale="need more",
+            )
+        return GapOutput(sufficient=True, radar_query="", rag_query="", rationale="done")
+
+    monkeypatch.setattr(workers_module, "assess_gaps", dupe_gap)
+    inv = await mgr.create("dupe probe query", "local")
+    try:
+        await run_investigation_loop(inv.id)
+        loaded = await mgr.get(inv.id)
+        assert loaded is not None
+        # Round 1 re-fetched only duplicates: the loop must continue, not FAILED.
+        assert loaded.status == InvestigationStatus.COMPLETE
+        assert loaded.status_reason == StatusReason.SUFFICIENT_EVIDENCE
+        assert [e.source_ref for e in loaded.board.evidence] == ["dup-ref"]
+        assert scripted_milestone == [(0, False), (1, True)]
+    finally:
+        await mgr.cancel(inv.id)

@@ -17,6 +17,17 @@ def _no_live_embeddings(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_live_integrations(monkeypatch):
+    """Mock-only discipline (DEC-008): integration flags are always off in
+    tests regardless of local .env, so no test can reach Radar, RAG, or the
+    web even when the developer machine has them enabled. Tests needing a
+    flag override it explicitly with monkeypatch."""
+    monkeypatch.setattr(settings, "radar_integration_enabled", False)
+    monkeypatch.setattr(settings, "rag_integration_enabled", False)
+    monkeypatch.setattr(settings, "web_tools_enabled", False)
+
+
+@pytest.fixture(autouse=True)
 def _no_live_analysis_workers(monkeypatch):
     """Mock-only discipline (DEC-008): the investigation loop's LLM workers
     never fire in tests, even when local .env has provider keys. Scripted

@@ -139,7 +139,7 @@ async def _race_planned(
 
 async def run_tool_round(
     investigation_id: str, planned: list[tuple[str, str]]
-) -> tuple[int, bool, bool]:
+) -> tuple[int, bool, bool, bool]:
     """Run one generic tool round with per-tool queries.
 
     Args:
@@ -149,19 +149,21 @@ async def run_tool_round(
             "skipped" and never touches the tool.
 
     Returns:
-        (written, attempted, stopped): written is this round's evidence
-        writes; attempted is True when at least one tool was reserved;
-        stopped is True when a cancel/deadline/terminal raced (caller must
-        return silently; the terminal state is owned elsewhere).
+        (written, attempted, stopped, succeeded): written is this round's
+        evidence writes; attempted is True when at least one tool was
+        reserved; stopped is True when a cancel/deadline/terminal raced
+        (caller must return silently; the terminal state is owned
+        elsewhere); succeeded is True when at least one reserved tool
+        returned ok (even with zero new items, e.g. all duplicates).
     """
     inv = await manager.get(investigation_id)
     if inv is None:
         logger.warning(
             {"message": "Tool round: investigation not found", "investigation_id": investigation_id}
         )
-        return (0, False, True)
+        return (0, False, True, False)
     if inv.status in TERMINAL:
-        return (0, False, True)
+        return (0, False, True, False)
 
     deadline_at = inv.deadline_at
     created_at = inv.created_at
@@ -219,30 +221,30 @@ async def run_tool_round(
                     "investigation_id": investigation_id,
                 }
             )
-            return (0, len(reserved) > 0, True)
+            return (0, len(reserved) > 0, True, False)
         if row.status in TERMINAL or row.status_reason is not None:
             # Budget exhausted (or a raced cancel/expiry ended the run); the
             # recorded terminal state stands, so stop dispatching.
-            return (0, len(reserved) > 0, True)
+            return (0, len(reserved) > 0, True, False)
         if is_web:
             web_calls_used = row.usage.web_calls_used
             amount = web_fetch_cost() if name.startswith("web_fetch") else web_search_cost()
             cost_row = await manager.add_cost(investigation_id, amount)
             if cost_row is None:
-                return (0, len(reserved) > 0, True)
+                return (0, len(reserved) > 0, True, False)
             if cost_row.status in TERMINAL or cost_row.status_reason is not None:
-                return (0, len(reserved) > 0, True)
+                return (0, len(reserved) > 0, True, False)
         reserved.append((tool, query))
 
     results: dict[str, ToolResult] = {}
     if reserved:
         raced = await _race_planned(investigation_id, reserved, deadline_at)
         if raced is None:
-            return (0, len(reserved) > 0, True)
+            return (0, len(reserved) > 0, True, False)
         results = raced
 
     if manager.cancel_event(investigation_id).is_set():
-        return (0, len(reserved) > 0, True)
+        return (0, len(reserved) > 0, True, False)
 
     seen = set(pre_existing_refs)
     written = 0
@@ -282,11 +284,13 @@ async def run_tool_round(
                         "error": str(exc),
                     }
                 )
-                return (written, True, True)
+                succeeded = any(result.ok for result in results.values())
+                return (written, True, True, succeeded)
             written += 1
             if pre_existing_count == 0 and written == 1:
                 FIRST_EVIDENCE_LATENCY.observe(now - created_at)
-    return (written, len(reserved) > 0, False)
+    succeeded = any(result.ok for result in results.values())
+    return (written, len(reserved) > 0, False, succeeded)
 
 
 async def run_opening_round(investigation_id: str) -> None:
@@ -336,7 +340,7 @@ async def _run_opening_round(investigation_id: str) -> None:
     pre_existing_count = len(inv.board.evidence)
 
     planned = [(name, query) for name in BASELINE_ROUND_ZERO]
-    written, attempted, stopped = await run_tool_round(investigation_id, planned)
+    written, attempted, stopped, _succeeded = await run_tool_round(investigation_id, planned)
     if stopped:
         return
 
