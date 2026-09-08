@@ -17,7 +17,9 @@ async function jsonOrThrow<T>(response: Response): Promise<T> {
     } catch {
       /* keep status-code detail */
     }
-    throw new Error(detail)
+    const err = new Error(detail) as Error & { status: number }
+    err.status = response.status
+    throw err
   }
   return response.json() as Promise<T>
 }

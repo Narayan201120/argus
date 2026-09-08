@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     rag_integration_enabled: bool = False
     rag_service_user: str | None = None
     rag_service_pass: str | None = None
+    rag_exchange_enabled: bool = False
+    rag_exchange_secret: str | None = None
+    rag_exchange_url: str | None = None
     tool_timeout_s: int = 30
     web_tools_enabled: bool = False
     tavily_api_key: str | None = None

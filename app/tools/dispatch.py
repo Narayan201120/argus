@@ -30,11 +30,13 @@ logger = get_logger(__name__)
 BASELINE_ROUND_ZERO: tuple[str, ...] = ("radar_search", "rag_retrieve")
 
 
-async def _run_one(tool: BaseTool, query: str) -> ToolResult:
+async def _run_one(
+    tool: BaseTool, query: str, params: dict[str, Any] | None = None
+) -> ToolResult:
     """Run one tool under the shared tool timeout; every failure becomes ok=False."""
     start = time.monotonic()
     try:
-        return await asyncio.wait_for(tool.run(query), settings.tool_timeout_s)
+        return await asyncio.wait_for(tool.run(query, params), settings.tool_timeout_s)
     except TimeoutError:
         elapsed_ms = max(int((time.monotonic() - start) * 1000), 0)
         return ToolResult(
@@ -56,6 +58,7 @@ async def _race_tools(
     tools: list[BaseTool],
     query: str,
     deadline_at: float,
+    params: dict[str, Any] | None = None,
 ) -> dict[str, ToolResult] | None:
     """Run reserved tools concurrently against the cancel event and wall clock.
 
@@ -65,7 +68,7 @@ async def _race_tools(
     """
     event = manager.cancel_event(investigation_id)
     pending: dict[asyncio.Task[ToolResult], BaseTool] = {
-        asyncio.ensure_future(_run_one(tool, query)): tool for tool in tools
+        asyncio.ensure_future(_run_one(tool, query, params)): tool for tool in tools
     }
     watcher: asyncio.Task[bool] = asyncio.ensure_future(event.wait())
     results: dict[str, ToolResult] = {}
@@ -100,6 +103,7 @@ async def _race_planned(
     investigation_id: str,
     planned_tools: list[tuple[BaseTool, str]],
     deadline_at: float,
+    params: dict[str, Any] | None = None,
 ) -> dict[str, ToolResult] | None:
     """Race reserved tools that each carry their own query string.
 
@@ -108,7 +112,7 @@ async def _race_planned(
     """
     event = manager.cancel_event(investigation_id)
     pending: dict[asyncio.Task[ToolResult], BaseTool] = {
-        asyncio.ensure_future(_run_one(tool, query)): tool for tool, query in planned_tools
+        asyncio.ensure_future(_run_one(tool, query, params)): tool for tool, query in planned_tools
     }
     watcher: asyncio.Task[bool] = asyncio.ensure_future(event.wait())
     results: dict[str, ToolResult] = {}
@@ -238,7 +242,9 @@ async def run_tool_round(
 
     results: dict[str, ToolResult] = {}
     if reserved:
-        raced = await _race_planned(investigation_id, reserved, deadline_at)
+        raced = await _race_planned(
+            investigation_id, reserved, deadline_at, {"owner": inv.user_id}
+        )
         if raced is None:
             return (0, len(reserved) > 0, True, False)
         results = raced

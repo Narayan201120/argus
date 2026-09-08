@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { getModels, getRouting, postFeedback, speakText, streamQuery, transcribeAudio } from './api'
+import { fetchMe, getSubject, isAuthError, logout, setSubject as persistSubject } from './auth'
 import { startInvestigation } from './investigate'
 import InvestigationView from './InvestigationView'
 import LibraryView from './LibraryView'
+import LoginView from './LoginView'
 import RadarView from './RadarView'
 import type {
   ModelInfo,
@@ -95,6 +97,8 @@ export default function App() {
   const [invQuery, setInvQuery] = useState('')
   const [invBusy, setInvBusy] = useState(false)
   const [invFailure, setInvFailure] = useState<string | null>(null)
+  const [subject, setSubjectState] = useState<string | null>(() => getSubject())
+  const [needsLogin, setNeedsLogin] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -118,6 +122,45 @@ export default function App() {
       // Respect a persisted strategy; only default when none saved.
       setStrategy((current) => current || r.strategies[0]?.name || '')
     }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    fetchMe()
+      .then((me) => {
+        if (me.sub) {
+          persistSubject(me.sub)
+          setSubjectState(me.sub)
+        }
+        setNeedsLogin(false)
+      })
+      .catch((err) => {
+        if (isAuthError(err)) {
+          logout()
+          setSubjectState(null)
+          setNeedsLogin(true)
+        } else {
+          setNeedsLogin(false)
+        }
+      })
+    const onFocus = () => {
+      fetchMe()
+        .then((me) => {
+          if (me.sub) {
+            persistSubject(me.sub)
+            setSubjectState(me.sub)
+          }
+          setNeedsLogin(false)
+        })
+        .catch((err) => {
+          if (isAuthError(err)) {
+            logout()
+            setSubjectState(null)
+            setNeedsLogin(true)
+          }
+        })
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
   }, [])
 
   useEffect(() => {
@@ -352,11 +395,35 @@ export default function App() {
     }
   }
 
+  if (needsLogin) {
+    return (
+      <LoginView
+        onLoggedIn={(sub) => {
+          setSubjectState(sub)
+          setNeedsLogin(false)
+        }}
+      />
+    )
+  }
+
   return (
     <div className="app">
       <header>
         <h1>ARGUS</h1>
         <div className="controls">
+          {subject && <span className="hint">{subject}</span>}
+          {subject && (
+            <button
+              onClick={() => {
+                logout()
+                setSubjectState(null)
+                setNeedsLogin(true)
+              }}
+              title="Sign out"
+            >
+              Logout
+            </button>
+          )}
           <button
             onClick={() => {
               const fresh =
