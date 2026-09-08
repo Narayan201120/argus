@@ -305,7 +305,7 @@ class InvestigationManager:
 
     def _finish(self, investigation_id: str) -> None:
         """Signal terminal state: wake the supervisor and drop its task (best effort)."""
-        event = self._events.get(investigation_id)
+        event = self._events.pop(investigation_id, None)
         if event is not None:
             event.set()
         task = self._supervisors.get(investigation_id)

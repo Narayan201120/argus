@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     # Answers longer than this are stored truncated in history
     memory_max_answer_chars: int = 1200
 
+    # Quality feedback (ratings; independent of working memory)
+    feedback_enabled: bool = True
+    feedback_ttl_s: int = 86400
+
     # Investigations (Phase 4 deep research, DEC-053)
     investigation_max_iterations: int = 3
     investigation_max_tool_calls: int = 12

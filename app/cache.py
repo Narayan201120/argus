@@ -28,14 +28,15 @@ class ResponseCache:
     async def get(self, payload: dict[str, Any]) -> dict[str, Any] | None:
         try:
             raw = await self._client.get(self._key(payload))
-        except RedisError as exc:
+            if raw is None:
+                return None
+            parsed = json.loads(raw)
+        except Exception as exc:
             from app.utils.logger import get_logger
 
             get_logger(__name__).warning({"message": "Cache read failed", "error": str(exc)})
             return None
-        if raw is None:
-            return None
-        return json.loads(raw)
+        return parsed if isinstance(parsed, dict) else None
 
     async def set(self, payload: dict[str, Any], response_body: dict[str, Any]) -> bool:
         if len(json.dumps(response_body).encode("utf-8")) > settings.cache_max_bytes:

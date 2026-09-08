@@ -54,3 +54,15 @@ async def test_cache_fail_open_on_error(cache, fake_redis, monkeypatch):
 
     monkeypatch.setattr(fake_redis, "get", boom)
     assert await cache.get(payload) is None
+
+
+async def test_cache_corrupt_value_reads_as_miss(cache, fake_redis):
+    payload = {"query": "corrupt"}
+    await fake_redis.set(ResponseCache._key(payload), "not-json{{{")
+    assert await cache.get(payload) is None
+
+
+async def test_cache_non_dict_value_reads_as_miss(cache, fake_redis):
+    payload = {"query": "list"}
+    await fake_redis.set(ResponseCache._key(payload), "[1, 2, 3]")
+    assert await cache.get(payload) is None

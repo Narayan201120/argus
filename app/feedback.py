@@ -27,14 +27,14 @@ def _inv_key(investigation_id: str) -> str:
 
 async def save_rating(request_id: str, rating: int) -> bool:
     """Store a rating. Returns True when persisted."""
-    if not settings.memory_enabled or not request_id:
+    if not settings.feedback_enabled or not request_id:
         return False
     client = holder.client
     if client is None:
         return False
     try:
         payload: dict[str, Any] = {"rating": rating, "ts": time.time()}
-        ttl = max(settings.memory_ttl_s, 60)
+        ttl = max(settings.feedback_ttl_s, 60)
         await client.set(_key(request_id), json.dumps(payload), ex=ttl)
         return True
     except Exception as exc:  # noqa: BLE001 - fail open
@@ -43,7 +43,7 @@ async def save_rating(request_id: str, rating: int) -> bool:
 
 
 async def get_rating(request_id: str) -> int | None:
-    if not settings.memory_enabled or not request_id:
+    if not settings.feedback_enabled or not request_id:
         return None
     client = holder.client
     if client is None:
@@ -60,14 +60,14 @@ async def save_investigation_rating(investigation_id: str, rating: int) -> bool:
     """Store an investigation report rating. Returns True when persisted."""
     if rating < 1 or rating > 5:
         raise ValueError("rating must be between 1 and 5")
-    if not settings.memory_enabled or not investigation_id:
+    if not settings.feedback_enabled or not investigation_id:
         return False
     client = holder.client
     if client is None:
         return False
     try:
         payload: dict[str, Any] = {"rating": rating, "ts": time.time()}
-        ttl = max(settings.memory_ttl_s, 60)
+        ttl = max(settings.feedback_ttl_s, 60)
         await client.set(_inv_key(investigation_id), json.dumps(payload), ex=ttl)
         return True
     except Exception as exc:  # noqa: BLE001 - fail open
@@ -76,7 +76,7 @@ async def save_investigation_rating(investigation_id: str, rating: int) -> bool:
 
 
 async def get_investigation_rating(investigation_id: str) -> int | None:
-    if not settings.memory_enabled or not investigation_id:
+    if not settings.feedback_enabled or not investigation_id:
         return None
     client = holder.client
     if client is None:

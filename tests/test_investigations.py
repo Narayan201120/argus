@@ -144,6 +144,19 @@ def test_cancel_unknown_returns_404() -> None:
     assert client.post("/v1/investigate/inv_nope_unknown/cancel").status_code == 404
 
 
+async def test_cancel_event_popped_on_finish() -> None:
+    from app.investigations import InvestigationManager
+
+    mgr = InvestigationManager()
+    inv = await mgr.create("pop probe query", "local")
+    try:
+        assert inv.id in mgr._events
+        await mgr.cancel(inv.id)
+        assert inv.id not in mgr._events
+    finally:
+        await mgr.cancel(inv.id)
+
+
 # ── Budgets ───────────────────────────────────────────────────────────────────
 
 

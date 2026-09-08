@@ -539,3 +539,52 @@ async def test_synthesis_failure_still_completes(monkeypatch: pytest.MonkeyPatch
         assert await synthesis_store.load(inv.id) == []
     finally:
         await mgr.cancel(inv.id)
+
+
+# ── Demotion mirror ─────────────────────────────────────────────────────────
+
+
+def test_synthesis_pick_skips_demoted(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.connectors import availability as availability_module
+
+    dead = _FakeSynthesisConnector(query_content="dead")
+    dead.connector_id = "dead-synth"
+    live = _FakeSynthesisConnector(query_content="live")
+    live.connector_id = "live-synth"
+    for _ in range(3):
+        availability_module.record_auth_failure("dead-synth")
+    try:
+        monkeypatch.setattr(
+            synthesis_module.registry, "available", lambda: [dead, live]
+        )
+        assert synthesis_module._pick_connector() is live
+    finally:
+        availability_module.reset_all()
+
+
+def test_synthesis_records_auth_failure() -> None:
+    from app.connectors import availability as availability_module
+
+    bad = ConnectorResponse(
+        model_id="m",
+        content="",
+        latency_ms=1,
+        token_usage=TokenUsage(),
+        status=ConnectorStatus.ERROR,
+        error="401 Unauthorized",
+    )
+    synthesis_module._record_outcome("rec-synth", bad)
+    try:
+        assert availability_module.consecutive_auth_failures("rec-synth") == 1
+        ok = ConnectorResponse(
+            model_id="m",
+            content="ok",
+            latency_ms=1,
+            token_usage=TokenUsage(),
+            status=ConnectorStatus.SUCCESS,
+            error=None,
+        )
+        synthesis_module._record_outcome("rec-synth", ok)
+        assert availability_module.consecutive_auth_failures("rec-synth") == 0
+    finally:
+        availability_module.reset_all()

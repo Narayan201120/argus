@@ -79,8 +79,12 @@ class SessionStore:
         client = holder.client
         if client is None:
             return False
-        deleted = int(await client.delete(_key(session_id)) or 0)
-        return deleted > 0
+        try:
+            deleted = int(await client.delete(_key(session_id)) or 0)
+            return deleted > 0
+        except Exception as exc:  # noqa: BLE001 - fail open like append/recent
+            logger.warning({"message": "Memory clear failed (ignored)", "error": str(exc)})
+            return False
 
 
 def format_history(turns: list[dict[str, Any]]) -> str | None:

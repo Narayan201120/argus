@@ -60,6 +60,13 @@ async def test_clear_removes_session(fake_redis):
     assert await session_store.recent("gone") == []
 
 
+async def test_clear_fail_open_without_redis(monkeypatch):
+    from app.rediskit import holder
+
+    monkeypatch.setattr(holder, "client", None)
+    assert await session_store.clear("x") is False  # must not raise
+
+
 async def test_fail_open_when_redis_absent(monkeypatch):
     from app.rediskit import holder
 

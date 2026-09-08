@@ -18,6 +18,7 @@ import app.investigations as investigations_module
 from app.analysis import board as board_module
 from app.analysis import events as events_module
 from app.config import settings
+from app.connectors import availability as availability_module
 from app.connectors.base import (
     BaseConnector,
     ConnectorConfig,
@@ -63,7 +64,7 @@ class SynthesisRecord(BaseModel):
 
 
 def _pick_connector() -> BaseConnector:
-    """Select the connector for milestone synthesis."""
+    """Select the connector for milestone synthesis, skipping demoted ones."""
     pinned = settings.synthesis_connector_id.strip()
     if pinned:
         connector = registry.get(pinned)
@@ -71,19 +72,34 @@ def _pick_connector() -> BaseConnector:
             raise SynthesisError(f"provider_error: unknown synthesis connector {pinned!r}")
         if not connector.is_available:
             raise SynthesisError(f"provider_error: synthesis connector {pinned!r} unavailable")
+        if availability_module.is_demoted(connector.connector_id):
+            raise SynthesisError(f"provider_error: synthesis connector {pinned!r} demoted")
         return connector
-    available = registry.available()
-    if not available:
-        raise SynthesisError("provider_error: no available connectors")
-    return available[0]
+    for connector in registry.available():
+        if not availability_module.is_demoted(connector.connector_id):
+            return connector
+    raise SynthesisError("provider_error: no available connectors")
 
 
 def _failover_candidate(exclude_id: str) -> BaseConnector | None:
-    """Next available connector other than the one that just failed."""
+    """Next non-demoted available connector other than the one that just failed."""
     for connector in registry.available():
-        if connector.connector_id != exclude_id:
+        if connector.connector_id != exclude_id and not availability_module.is_demoted(
+            connector.connector_id
+        ):
             return connector
     return None
+
+
+def _record_outcome(connector_id: str, response: ConnectorResponse) -> None:
+    """Feed the demotion tracker; never raises."""
+    try:
+        if response.status == ConnectorStatus.SUCCESS:
+            availability_module.record_success(connector_id)
+        elif availability_module.is_auth_failure(response.status.value, response.error):
+            availability_module.record_auth_failure(connector_id)
+    except Exception:  # noqa: BLE001 - tracking must not break synthesis
+        pass
 
 
 def _provider_error(response: ConnectorResponse) -> SynthesisError:
@@ -301,6 +317,10 @@ async def synthesize_board(
                 raise SynthesisError("provider_error: empty synthesis")
             usage: TokenUsage | None = None
             record_role_tokens(SYNTHESIS_WORKER, used_id, usage)
+            try:
+                availability_module.record_success(used_id)
+            except Exception:  # noqa: BLE001 - tracking must not break synthesis
+                pass
             return full
 
         # No streamed output: single-shot query with one-step failover.
@@ -316,12 +336,14 @@ async def synthesize_board(
             except Exception as exc2:
                 raise SynthesisError(f"provider_error: {exc2}") from exc2
             if not _is_ok(retry):
+                _record_outcome(fallback.connector_id, retry)
                 raise _provider_error(retry) from None
             response, used = retry, fallback
         else:
             if _is_ok(response):
                 used = primary
             else:
+                _record_outcome(primary.connector_id, response)
                 if fallback is None:
                     raise _provider_error(response)
                 try:
@@ -329,12 +351,14 @@ async def synthesize_board(
                 except Exception as exc:
                     raise SynthesisError(f"provider_error: {exc}") from exc
                 if not _is_ok(retry):
+                    _record_outcome(fallback.connector_id, retry)
                     raise _provider_error(retry) from None
                 response, used = retry, fallback
 
         full = response.content
         if not full or not full.strip():
             raise SynthesisError("provider_error: empty synthesis")
+        _record_outcome(used.connector_id, response)
         if emit is not None:
             try:
                 await emit(full)
