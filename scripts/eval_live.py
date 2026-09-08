@@ -164,12 +164,20 @@ def run_one(
     syntheses_raw = body.get("syntheses")
     synthesis_items: list[Any] = list(syntheses_raw) if isinstance(syntheses_raw, list) else []
     syntheses = [
-        {"milestone": entry.get("milestone", 0), "final": bool(entry.get("final", False))}
+        {
+            "milestone": entry.get("milestone", 0),
+            "final": bool(entry.get("final", False)),
+            "markdown": str(entry.get("markdown", "")),
+        }
         for entry in synthesis_items
         if isinstance(entry, dict)
     ]
+    final_markdown = next(
+        (entry["markdown"] for entry in syntheses if entry["final"]), ""
+    )
     return {
         "case_id": case.id,
+        "query": case.query,
         "investigation_id": investigation_id,
         "status": body.get("status"),
         "status_reason": body.get("status_reason"),
@@ -177,6 +185,7 @@ def run_one(
         "evidence_ids": evidence_ids,
         "claims": claims,
         "syntheses": syntheses,
+        "final_markdown": final_markdown,
         "elapsed_s": elapsed_s,
         "timed_out": timed_out,
         # InvestigationBoardResponse carries no token-usage field, so rows

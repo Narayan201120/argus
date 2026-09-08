@@ -1,6 +1,6 @@
 # ARGUS Project Map
 
-Last updated: September 7, 2026 (v0.5.3 - demotion follow-up)
+Last updated: September 8, 2026 (v0.6.0 - Phase 5 complete)
 
 ## Current Stage
 

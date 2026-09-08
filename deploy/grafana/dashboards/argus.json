@@ -558,6 +558,55 @@
           "legendFormat": "serial {{tool}} s/s"
         }
       ]
+    },
+    {
+      "id": 25,
+      "title": "Eval grading workflow (offline truth in runs/)",
+      "type": "text",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 94
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "argus-prometheus"
+      },
+      "options": {
+        "content": "Eval verdicts live offline: no per-question Prometheus labels by design (cardinality).\n\nWorkflow:\n- mock: scripts/eval_mock.py (spends nothing)\n- live: scripts/eval_live.py --live (appends runs/<ts>.jsonl)\n- grade: scripts/eval_grade.py grade --run runs/<ts>.jsonl (appends runs/<ts>.grades.jsonl, resumable)\n- diff: scripts/eval_diff.py --candidate runs/<ts>.jsonl\n\nRubric: supported (all claims grounded + cited), partial (>=half grounded), unsupported (invented sources or mostly ungrounded), refused-correctly (any terminal state, zero fabrication, limits stated). Full rubric in evals/README.md.\n\nPanel 26 shows the activity an eval run moves (tool calls, loop stops, cost events). Verdict counts come from the grades files, never from Prometheus. Revisit a pushgateway in P6 if live verdicts are ever needed.",
+        "mode": "markdown"
+      },
+      "targets": []
+    },
+    {
+      "id": 26,
+      "title": "Eval-run activity (see runs/ for verdicts)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 94
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "argus-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (tool) (rate(argus_tool_calls_total[5m]))",
+          "legendFormat": "{{tool}}"
+        },
+        {
+          "expr": "sum by (reason) (rate(argus_loop_stops_total[5m]))",
+          "legendFormat": "stop {{reason}}"
+        },
+        {
+          "expr": "sum(rate(argus_investigation_cost_usd_count[5m]))",
+          "legendFormat": "cost events/s"
+        }
+      ]
     }
   ]
 }
