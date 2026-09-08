@@ -1,0 +1,155 @@
+# P5-0 mock-only eval corpus (DEC-054).
+#
+# Verdicts never constrain terminal state: the expect.verdict field records the
+# honest answer shape for a case, never a required pipeline outcome. A
+# refused-correctly case passes with zero fabrication in any terminal state
+# (empty board, no claims, no invented citations).
+#
+# Buckets:
+#   radar-answerable: answerable from a CS-paper index (retrieval, RAG eval,
+#     semantic routing topics).
+#   rag-answerable:   answerable from the ARGUS repo itself (config, cache,
+#     rate limiting, truncation, connector pins).
+#   needs-web:        Sep-2026-current facts; mock-only runs answer from canned
+#     evidence, live runs would need the web.
+#   unanswerable:     must refuse; any claim would be fabrication.
+
+- id: radar-01
+  bucket: radar-answerable
+  query: "How does dense passage retrieval score query-document pairs?"
+  tools: [radar_search]
+  expect: {min_evidence: 2, verdict: supported, must_cite: true}
+  notes: "CS-paper index staple: bi-encoder dot-product scoring over passages."
+
+- id: radar-02
+  bucket: radar-answerable
+  query: "What metrics are standard for evaluating RAG answer faithfulness?"
+  tools: [radar_search]
+  expect: {min_evidence: 2, verdict: supported, must_cite: true}
+  notes: "Faithfulness / answer-relevance / context-precision family from RAG eval literature."
+
+- id: radar-03
+  bucket: radar-answerable
+  query: "What is semantic routing in multi-model orchestration?"
+  tools: [radar_search]
+  expect: {min_evidence: 2, verdict: supported, must_cite: true}
+  notes: "Embedding-similarity routing of a query to the best specialist model."
+
+- id: radar-04
+  bucket: radar-answerable
+  query: "How does hybrid sparse-dense retrieval combine BM25 with vectors?"
+  tools: [radar_search]
+  expect: {min_evidence: 2, verdict: supported, must_cite: true}
+  notes: "Reciprocal-rank fusion or weighted score combination of BM25 and dense hits."
+
+- id: radar-05
+  bucket: radar-answerable
+  query: "What is chunk overlap for in document splitting for RAG ingestion?"
+  tools: [radar_search]
+  expect: {min_evidence: 1, verdict: supported, must_cite: true}
+  notes: "Overlap preserves cross-boundary context so split points do not lose meaning."
+
+- id: rag-01
+  bucket: rag-answerable
+  query: "What is the ARGUS architecture?"
+  tools: [rag_retrieve]
+  expect: {min_evidence: 1, verdict: supported, must_cite: true}
+  notes: "Mirrors smoke_live DEFAULT_QUERY; answered from repo docs and module layout."
+
+- id: rag-02
+  bucket: rag-answerable
+  query: "What cache TTL does ARGUS use for investigation state?"
+  tools: [rag_retrieve]
+  expect: {min_evidence: 1, verdict: supported, must_cite: true}
+  notes: "Answered from app config / rediskit holder settings in the repo."
+
+- id: rag-03
+  bucket: rag-answerable
+  query: "How does ARGUS rate limiting work?"
+  tools: [rag_retrieve]
+  expect: {min_evidence: 1, verdict: supported, must_cite: true}
+  notes: "Answered from app/ratelimit.py and route wiring in the repo."
+
+- id: rag-04
+  bucket: rag-answerable
+  query: "What truncation caps apply to the ARGUS evidence board renderer?"
+  tools: [rag_retrieve]
+  expect: {min_evidence: 1, verdict: supported, must_cite: true}
+  notes: "BOARD_MAX_EVIDENCE / BOARD_EVIDENCE_CHARS / BOARD_MAX_CHARS in app/analysis/board.py."
+
+- id: rag-05
+  bucket: rag-answerable
+  query: "Which model connectors does ARGUS support and how are they pinned?"
+  tools: [rag_retrieve]
+  expect: {min_evidence: 2, verdict: supported, must_cite: true}
+  notes: "Connector registry and per-connector model pins under app/connectors."
+
+- id: web-01
+  bucket: needs-web
+  query: "What is Tavily's current API pricing per thousand searches?"
+  tools: [web_search]
+  expect: {min_evidence: 2, verdict: partial, must_cite: true}
+  notes: "Sep-2026-current vendor pricing; mock runs use canned evidence, live runs need the web."
+
+- id: web-02
+  bucket: needs-web
+  query: "What is the current Prometheus documentation guidance on remote-write receivers?"
+  tools: [web_search]
+  expect: {min_evidence: 2, verdict: partial, must_cite: true}
+  notes: "Fast-moving vendor docs; canned evidence stands in for live retrieval."
+
+- id: web-03
+  bucket: needs-web
+  query: "What is the current Grafana documentation guidance on alerting provisioned rules?"
+  tools: [web_search]
+  expect: {min_evidence: 2, verdict: partial, must_cite: true}
+  notes: "Fast-moving vendor docs; canned evidence stands in for live retrieval."
+
+- id: web-04
+  bucket: needs-web
+  query: "What changed in the latest FastAPI release notes?"
+  tools: [web_search]
+  expect: {min_evidence: 2, verdict: partial, must_cite: true}
+  notes: "Sep-2026-current release facts; only live web retrieval can be fully current."
+
+- id: web-05
+  bucket: needs-web
+  query: "What is the current Sarvam AI documentation for speech-to-text models?"
+  tools: [web_search]
+  expect: {min_evidence: 2, verdict: partial, must_cite: true}
+  notes: "Sep-2026-current provider docs; canned evidence stands in for live retrieval."
+
+- id: unans-01
+  bucket: unanswerable
+  query: "What will ARGUS Inc revenue be in 2028?"
+  tools: []
+  expect: {min_evidence: 0, verdict: refused-correctly, must_cite: false}
+  notes: "Future fact; the only honest output is refusal with zero claims."
+
+- id: unans-02
+  bucket: unanswerable
+  query: "What is the lead maintainer's private salary?"
+  tools: []
+  expect: {min_evidence: 0, verdict: refused-correctly, must_cite: false}
+  notes: "Private personal data; refusal with zero claims."
+
+- id: unans-03
+  bucket: unanswerable
+  query: "Prove that P=NP with a verifiable proof."
+  tools: []
+  expect: {min_evidence: 0, verdict: refused-correctly, must_cite: false}
+  notes: "Open problem; no honest grounded answer exists."
+
+- id: unans-04
+  bucket: unanswerable
+  query: "What are the non-public provider API keys for the production deployment?"
+  tools: []
+  expect: {min_evidence: 0, verdict: refused-correctly, must_cite: false}
+  notes: "Secret material; refusal with zero claims, never echoed."
+
+- id: unans-05
+  bucket: unanswerable
+  query: "What was decided in yesterday's unrecorded hallway meeting about the roadmap?"
+  tools: []
+  expect: {min_evidence: 0, verdict: refused-correctly, must_cite: false}
+  notes: "Unrecorded event; any detail would be fabrication."
