@@ -12,7 +12,7 @@ import json
 import time
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 
 from app.api.routes.query import run_query
@@ -151,6 +151,7 @@ async def speak(request: SpeakRequest) -> Response:
 
 @router.post("/query/audio", response_model=AudioQueryResponse)
 async def query_audio(
+    http_request: Request,
     file: Annotated[UploadFile, File(...)],
     options: Annotated[str | None, Form()] = None,
     session_id: Annotated[str | None, Form()] = None,
@@ -176,7 +177,7 @@ async def query_audio(
     request.model_config_ = model_config_request
     if session_id:
         request.session_id = session_id
-    response = await run_query(request)
+    response = await run_query(request, http_request)
 
     return AudioQueryResponse(
         **response.model_dump(),

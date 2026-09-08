@@ -1,6 +1,6 @@
 """Async investigation endpoints (P4-0 routes only, no business logic)."""
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from app.analysis.loop import run_investigation_loop
 from app.analysis.synthesis import synthesis_store
@@ -15,6 +15,7 @@ from app.api.schemas import (
     InvestigationListResponse,
     InvestigationSummary,
 )
+from app.auth import resolve_subject
 from app.investigations import manager
 
 router = APIRouter()
@@ -22,10 +23,13 @@ router = APIRouter()
 
 @router.post("/investigate", response_model=InvestigateCreated, status_code=202)
 async def start_investigation(
-    request: InvestigateRequest, background_tasks: BackgroundTasks
+    request: InvestigateRequest, background_tasks: BackgroundTasks, http_request: Request
 ) -> InvestigateCreated:
+    # P7-1: the client user_id field is ignored. The server subject wins,
+    # falling back to "local" only in single-user mode.
+    owner = resolve_subject(http_request)
     try:
-        investigation = await manager.create(request.query.strip(), request.user_id.strip() or "local")
+        investigation = await manager.create(request.query.strip(), owner)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     background_tasks.add_task(run_investigation_loop, investigation.id)
@@ -38,8 +42,9 @@ async def start_investigation(
 
 
 @router.get("/investigations", response_model=InvestigationListResponse)
-async def list_investigations(limit: int = 20) -> InvestigationListResponse:
-    investigations = await manager.list_recent(limit)
+async def list_investigations(http_request: Request, limit: int = 20) -> InvestigationListResponse:
+    owner = resolve_subject(http_request)
+    investigations = await manager.list_recent(limit, owner=owner)
     summaries: list[InvestigationSummary] = []
     for inv in investigations:
         syntheses = await synthesis_store.load(inv.id)
@@ -61,8 +66,10 @@ async def list_investigations(limit: int = 20) -> InvestigationListResponse:
 
 
 @router.get("/investigate/{investigation_id}", response_model=InvestigationBoardResponse)
-async def read_investigation(investigation_id: str) -> InvestigationBoardResponse:
-    investigation = await manager.get(investigation_id)
+async def read_investigation(
+    investigation_id: str, http_request: Request
+) -> InvestigationBoardResponse:
+    investigation = await manager.get(investigation_id, owner=resolve_subject(http_request))
     if investigation is None:
         raise HTTPException(status_code=404, detail="Investigation not found.")
     evidence = list(investigation.board.evidence)
@@ -86,7 +93,13 @@ async def read_investigation(investigation_id: str) -> InvestigationBoardRespons
 
 
 @router.post("/investigate/{investigation_id}/cancel", response_model=CancelInvestigationResponse)
-async def cancel_investigation(investigation_id: str) -> CancelInvestigationResponse:
+async def cancel_investigation(
+    investigation_id: str, http_request: Request
+) -> CancelInvestigationResponse:
+    owner = resolve_subject(http_request)
+    investigation = await manager.get(investigation_id, owner=owner)
+    if investigation is None:
+        raise HTTPException(status_code=404, detail="Investigation not found.")
     investigation = await manager.cancel(investigation_id)
     if investigation is None:
         raise HTTPException(status_code=404, detail="Investigation not found.")
@@ -103,15 +116,16 @@ async def cancel_investigation(investigation_id: str) -> CancelInvestigationResp
     response_model=InvestigateFeedbackResponse,
 )
 async def post_investigation_feedback(
-    investigation_id: str, request: InvestigateFeedbackRequest
+    investigation_id: str, request: InvestigateFeedbackRequest, http_request: Request
 ) -> InvestigateFeedbackResponse:
     from app.feedback import save_investigation_rating
     from app.metrics import INVESTIGATION_FEEDBACK_TOTAL
 
-    investigation = await manager.get(investigation_id)
+    owner = resolve_subject(http_request)
+    investigation = await manager.get(investigation_id, owner=owner)
     if investigation is None:
         raise HTTPException(status_code=404, detail="Investigation not found.")
-    stored = await save_investigation_rating(investigation_id, request.rating)
+    stored = await save_investigation_rating(investigation_id, request.rating, owner=owner)
     if not stored:
         raise HTTPException(
             status_code=503,

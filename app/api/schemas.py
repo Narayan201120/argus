@@ -181,6 +181,8 @@ class ReportJobStatus(BaseModel):
     role_assignments: dict[str, str] = Field(default_factory=dict)
     created_at: float
     updated_at: float
+    # P7-1 additive owner echo. Empty means legacy pre-scoping row.
+    owner: str = ""
 
 
 # P4-0 investigate API schemas (append-only section; existing classes above are untouched).

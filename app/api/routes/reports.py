@@ -1,7 +1,7 @@
 import asyncio
 from dataclasses import asdict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from app.api.routes.shared import resolve_request_connectors
 from app.api.schemas import (
@@ -9,6 +9,7 @@ from app.api.schemas import (
     ReportCreateResponse,
     ReportJobStatus,
 )
+from app.auth import resolve_subject
 from app.connectors.base import ConnectorConfig
 from app.metrics import REPORT_JOBS
 from app.orchestration.report_jobs import report_job_store
@@ -20,10 +21,13 @@ logger = get_logger(__name__)
 
 
 @router.post("/report", status_code=202, response_model=ReportCreateResponse)
-async def create_report(request: QueryRequest) -> ReportCreateResponse:
+async def create_report(
+    request: QueryRequest, http_request: Request
+) -> ReportCreateResponse:
     resolved = await resolve_request_connectors(request)
     active = resolved.active_connectors
-    job = await report_job_store.create(request.query)
+    owner = resolve_subject(http_request)
+    job = await report_job_store.create(request.query, owner=owner)
     REPORT_JOBS.labels(status="accepted").inc()
 
     config = ConnectorConfig(
@@ -53,8 +57,8 @@ async def create_report(request: QueryRequest) -> ReportCreateResponse:
 
 
 @router.get("/report/{job_id}", response_model=ReportJobStatus)
-async def get_report(job_id: str) -> ReportJobStatus:
-    job = await report_job_store.get(job_id)
+async def get_report(job_id: str, http_request: Request) -> ReportJobStatus:
+    job = await report_job_store.get(job_id, owner=resolve_subject(http_request))
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown report job.")
     return ReportJobStatus(**asdict(job))

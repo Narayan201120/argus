@@ -69,18 +69,20 @@ def test_create_defaults_to_local_planned() -> None:
         client.post(f"/v1/investigate/{body['investigation_id']}/cancel")
 
 
-def test_explicit_user_id_stored_and_echoed() -> None:
+def test_client_user_id_ignored_server_subject_wins() -> None:
+    # P7-1: the client user_id field is ignored. Auth is off here, so the
+    # single-user fallback owns the row regardless of what the caller sends.
     resp = client.post("/v1/investigate", json={"query": "Whose is this?", "user_id": "alice"})
     assert resp.status_code == 202
-    assert resp.json()["user_id"] == "alice"
+    assert resp.json()["user_id"] == "local"
     inv_id: str = resp.json()["investigation_id"]
     try:
         got = client.get(f"/v1/investigate/{inv_id}")
         assert got.status_code == 200
-        assert got.json()["user_id"] == "alice"
+        assert got.json()["user_id"] == "local"
         stored = asyncio.run(manager.get(inv_id))
         assert stored is not None
-        assert stored.user_id == "alice"  # mandatory in the stored record
+        assert stored.user_id == "local"  # mandatory in the stored record
     finally:
         client.post(f"/v1/investigate/{inv_id}/cancel")
 
@@ -278,27 +280,40 @@ async def test_illegal_transition_raises() -> None:
         await manager.cancel(inv.id)
 
 
-# ── No authorization branching ────────────────────────────────────────────────
+# ── Per-user scoping (P7-1, DEC-056) ───────────────────────────────────────────
 
 
-async def test_read_and_cancel_ignore_user_id() -> None:
-    # Manager-level creation keeps the rows pre-loop so cancels are deterministic.
+async def test_cross_owner_rows_read_as_missing() -> None:
+    # Auth is off, so the anonymous caller resolves to "local". Rows owned
+    # by anyone else answer 404, never 403. No id oracle.
     alice_inv = await manager.create("alice query", "alice")
     local_inv = await manager.create("local query", "local")
     alice_id = alice_inv.id
     local_id = local_inv.id
     try:
-        # Cross-identity reads succeed; "local" grants nothing special, no 403/401 anywhere.
-        for inv_id in (alice_id, local_id):
-            assert client.get(f"/v1/investigate/{inv_id}").status_code == 200
-        cancelled_alice = client.post(f"/v1/investigate/{alice_id}/cancel")
+        assert client.get(f"/v1/investigate/{local_id}").status_code == 200
+        assert client.get(f"/v1/investigate/{alice_id}").status_code == 404
+        assert client.post(f"/v1/investigate/{alice_id}/cancel").status_code == 404
         cancelled_local = client.post(f"/v1/investigate/{local_id}/cancel")
-        assert cancelled_alice.status_code == 200
         assert cancelled_local.status_code == 200
-        assert cancelled_alice.json()["status"] == cancelled_local.json()["status"] == "cancelled"
+        assert cancelled_local.json()["status"] == "cancelled"
+        assert (
+            client.post(f"/v1/investigate/{alice_id}/feedback", json={"rating": 4}).status_code
+            == 404
+        )
     finally:
         client.post(f"/v1/investigate/{alice_id}/cancel")
         client.post(f"/v1/investigate/{local_id}/cancel")
+        await manager.cancel(alice_id)
+
+
+async def test_list_recent_filters_by_owner() -> None:
+    rows = await manager.list_recent(100, owner="local")
+    assert all(inv.user_id == "local" for inv in rows)
+    alice_rows = await manager.list_recent(100, owner="alice")
+    assert all(inv.user_id == "alice" for inv in alice_rows)
+    unscoped = await manager.list_recent(100)
+    assert len(unscoped) >= len(rows)
 
 
 # ── List recent (P4-4) ────────────────────────────────────────────────────────
@@ -371,7 +386,7 @@ async def test_list_summaries_carry_correct_counts() -> None:
     from app.analysis.synthesis import SynthesisRecord, synthesis_store
 
     long_query = "q" * 300
-    created = await manager.create(long_query, "alice")
+    created = await manager.create(long_query, "local")
     inv_id = created.id
     try:
         ev1 = _make_evidence(inv_id)
@@ -388,7 +403,7 @@ async def test_list_summaries_carry_correct_counts() -> None:
         assert resp.status_code == 200
         summaries = resp.json()["investigations"]
         match = next(s for s in summaries if s["investigation_id"] == inv_id)
-        assert match["user_id"] == "alice"
+        assert match["user_id"] == "local"
         assert match["query"] == "q" * 200  # truncated to 200 chars in the route
         assert match["evidence_count"] == 2
         assert match["claim_count"] == 1

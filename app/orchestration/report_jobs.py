@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field, replace
 
 from redis.exceptions import RedisError
 
+from app.config import settings
 from app.rediskit import holder
 from app.utils.logger import get_logger
 
@@ -31,23 +32,37 @@ class ReportJob:
     role_assignments: dict[str, str] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+    # P7-1 additive owner. Empty means legacy pre-scoping row, visible
+    # only in single-user mode. Never migrated; TTL ages it out.
+    owner: str = ""
 
 
 class ReportJobStore:
     def __init__(self):
         self._jobs: dict[str, ReportJob] = {}
 
-    async def create(self, query: str) -> ReportJob:
-        job = ReportJob(job_id=str(uuid.uuid4()), query=query)
+    async def create(self, query: str, owner: str = "") -> ReportJob:
+        job = ReportJob(job_id=str(uuid.uuid4()), query=query, owner=owner)
         self._jobs[job.job_id] = job
         await self._mirror(job)
         return job
 
-    async def get(self, job_id: str) -> ReportJob | None:
+    async def get(self, job_id: str, owner: str | None = None) -> ReportJob | None:
+        """Load one job. Scoped like investigations: foreign rows read as missing."""
         job = self._jobs.get(job_id)
-        if job is not None:
-            return job
-        return await self._restore(job_id)
+        if job is None:
+            job = await self._restore(job_id)
+        if job is None:
+            return None
+        if owner is not None and not self._visible_to(job, owner):
+            return None
+        return job
+
+    @staticmethod
+    def _visible_to(job: ReportJob, owner: str) -> bool:
+        if job.owner:
+            return job.owner == owner
+        return settings.auth_single_user_mode
 
     async def update(self, job_id: str, **changes) -> ReportJob | None:
         job = self._jobs.get(job_id)

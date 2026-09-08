@@ -35,12 +35,14 @@ _APPEND_WATCH_RETRIES = 10
 _APPEND_RETRY_BACKOFF_S = 0.005
 
 
-def _key(session_id: str) -> str:
-    return f"argus:sess:{session_id}"
+def _key(session_id: str, owner: str = "local") -> str:
+    return f"argus:sess:{owner}:{session_id}"
 
 
 class SessionStore:
-    async def append(self, session_id: str, question: str, answer: str) -> None:
+    async def append(
+        self, session_id: str, question: str, answer: str, *, owner: str = "local"
+    ) -> None:
         """Store one exchange, rolling off turns beyond MEMORY_MAX_TURNS.
 
         Answers longer than MEMORY_MAX_ANSWER_CHARS are stored truncated:
@@ -62,7 +64,7 @@ class SessionStore:
             stored_answer = stored_answer[: settings.memory_max_answer_chars]
             MEMORY_TRUNCATED_ANSWERS.inc()
         new_turn = {"q": question, "a": stored_answer, "ts": time.time()}
-        key = _key(session_id)
+        key = _key(session_id, owner)
         max_turns = max(settings.memory_max_turns, 1)
         ttl = max(settings.memory_ttl_s, 60)
         for attempt in range(_APPEND_WATCH_RETRIES):
@@ -88,7 +90,9 @@ class SessionStore:
                 return
         logger.warning({"message": "Memory append failed (ignored)", "error": "watch retries exhausted"})
 
-    async def recent(self, session_id: str, limit: int | None = None) -> list[dict[str, Any]]:
+    async def recent(
+        self, session_id: str, limit: int | None = None, *, owner: str = "local"
+    ) -> list[dict[str, Any]]:
         """Most recent turns, oldest first."""
         if not settings.memory_enabled or not session_id:
             return []
@@ -96,7 +100,7 @@ class SessionStore:
         if client is None:
             return []
         try:
-            raw = await client.get(_key(session_id))
+            raw = await client.get(_key(session_id, owner))
             turns = json.loads(raw) if raw else []
             limit = limit or settings.memory_inject_turns
             return turns[-max(limit, 1):]
@@ -104,14 +108,14 @@ class SessionStore:
             logger.warning({"message": "Memory read failed (ignored)", "error": str(exc)})
             return []
 
-    async def clear(self, session_id: str) -> bool:
+    async def clear(self, session_id: str, *, owner: str = "local") -> bool:
         if not settings.memory_enabled or not session_id:
             return False
         client = holder.client
         if client is None:
             return False
         try:
-            deleted = int(await client.delete(_key(session_id)) or 0)
+            deleted = int(await client.delete(_key(session_id, owner)) or 0)
             return deleted > 0
         except Exception as exc:  # noqa: BLE001 - fail open like append/recent
             logger.warning({"message": "Memory clear failed (ignored)", "error": str(exc)})
@@ -145,8 +149,10 @@ def format_history(turns: list[dict[str, Any]]) -> str | None:
 session_store = SessionStore()
 
 
-async def load_history_text(session_id: str | None) -> str | None:
+async def load_history_text(
+    session_id: str | None, owner: str = "local"
+) -> str | None:
     """Convenience wrapper used by the API routes."""
     if not session_id:
         return None
-    return format_history(await session_store.recent(session_id))
+    return format_history(await session_store.recent(session_id, owner=owner))

@@ -13,7 +13,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from starlette.responses import StreamingResponse
 
 from app.analysis import events as events_module
@@ -32,8 +32,10 @@ def _sse(event: str, data: dict[str, Any]) -> str:
 
 
 @router.get("/investigate/{investigation_id}/stream")
-async def stream_investigation(investigation_id: str) -> StreamingResponse:
-    board = await read_investigation(investigation_id)  # 404 when unknown.
+async def stream_investigation(
+    investigation_id: str, http_request: Request
+) -> StreamingResponse:
+    board = await read_investigation(investigation_id, http_request)  # 404 when unknown.
     snapshot = board.model_dump(mode="json")
 
     async def event_stream() -> AsyncIterator[str]:

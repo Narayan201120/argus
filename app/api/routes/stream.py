@@ -13,12 +13,13 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from starlette.responses import StreamingResponse
 
 from app.api.routes.query import _build_status, _token_usage_out
 from app.api.routes.shared import resolve_request_connectors
 from app.api.schemas import ModelStatus, QueryRequest, QueryResponse
+from app.auth import resolve_subject
 from app.connectors.base import BaseConnector, ConnectorConfig, ConnectorResponse
 from app.memory import load_history_text, session_store
 from app.metrics import record_role_outcome, record_role_tokens
@@ -81,8 +82,9 @@ def _model_status(role: StreamRole, response: ConnectorResponse) -> ModelStatus:
 
 
 @router.post("/query/stream")
-async def stream_query(request: QueryRequest) -> StreamingResponse:
+async def stream_query(request: QueryRequest, http_request: Request) -> StreamingResponse:
     request_id = str(uuid.uuid4())
+    owner = resolve_subject(http_request)
     resolved = await resolve_request_connectors(request)
     active_connectors = resolved.active_connectors
     overrides = resolved.overrides
@@ -122,7 +124,7 @@ async def stream_query(request: QueryRequest) -> StreamingResponse:
         ))
         return outcome
 
-    session_history_text = await load_history_text(request.session_id)
+    session_history_text = await load_history_text(request.session_id, owner=owner)
 
     async def run_long_pipeline(total_start: float) -> QueryResponse:
         plan = build_parallel_plan(
@@ -271,7 +273,10 @@ async def stream_query(request: QueryRequest) -> StreamingResponse:
                 envelope = await run_long_pipeline(total_start)
             if envelope.result:
                 await session_store.append(
-                    request.session_id or "", request.query, envelope.result
+                    request.session_id or "",
+                    request.query,
+                    envelope.result,
+                    owner=owner,
                 )
             await emit("final", envelope.model_dump(mode="json"))
         except Exception as exc:

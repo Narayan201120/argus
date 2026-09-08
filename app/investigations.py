@@ -141,12 +141,30 @@ class InvestigationManager:
         logger.info({"message": "Investigation created", "investigation_id": inv.id})
         return inv
 
-    async def get(self, investigation_id: str) -> Investigation | None:
-        return await self._store.load(investigation_id)
+    async def get(
+        self, investigation_id: str, owner: str | None = None
+    ) -> Investigation | None:
+        """Load one row. When owner is set, foreign rows read as missing.
 
-    async def list_recent(self, limit: int = 20) -> list[Investigation]:
+        Enforcement after load (P7-1, DEC-056): cross-user access returns
+        None so routes answer 404, never 403. No id oracle. Internal
+        callers (loop, transition, record_*, sweep) pass no owner.
+        """
+        inv = await self._store.load(investigation_id)
+        if inv is None:
+            return None
+        if owner is not None and inv.user_id != owner:
+            return None
+        return inv
+
+    async def list_recent(
+        self, limit: int = 20, owner: str | None = None
+    ) -> list[Investigation]:
         clamped = max(1, min(int(limit), 100))
-        return await self._store.list_recent(clamped)
+        if owner is None:
+            return await self._store.list_recent(clamped)
+        rows = await self._store.list_recent(500)
+        return [row for row in rows if row.user_id == owner][:clamped]
 
     @staticmethod
     def check_budgets(inv: Investigation) -> StatusReason | None:

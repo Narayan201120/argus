@@ -28,8 +28,19 @@ def _use_fake_redis(fake_redis, monkeypatch):
     monkeypatch.setattr(settings, "memory_enabled", True)
 
 
-def _key(sid: str) -> str:
-    return f"argus:sess:{sid}"
+def _key(sid: str, owner: str = "local") -> str:
+    return f"argus:sess:{owner}:{sid}"
+
+
+async def test_owner_scoping_isolates_sessions(fake_redis):
+    await session_store.append("shared", "q-alice", "a-alice", owner="alice")
+    await session_store.append("shared", "q-bob", "a-bob", owner="bob")
+    alice = await session_store.recent("shared", owner="alice")
+    bob = await session_store.recent("shared", owner="bob")
+    assert [t["q"] for t in alice] == ["q-alice"]
+    assert [t["q"] for t in bob] == ["q-bob"]
+    assert await fake_redis.get(_key("shared", "alice")) is not None
+    assert await fake_redis.get(_key("shared")) is None  # no unscoped key
 
 
 async def test_append_stores_and_trims_to_max_turns(fake_redis):

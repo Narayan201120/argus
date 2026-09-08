@@ -3,10 +3,11 @@ import time
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from app.api.routes.shared import resolve_request_connectors
 from app.api.schemas import ModelStatus, QueryRequest, QueryResponse, TokenUsageOut
+from app.auth import resolve_subject
 from app.cache import ResponseCache
 from app.config import settings
 from app.connectors.base import (
@@ -98,8 +99,9 @@ def _token_usage_out(token_usage: TokenUsage | None) -> TokenUsageOut | None:
     )
 
 
-def _cache_payload(request: QueryRequest) -> dict:
+def _cache_payload(request: QueryRequest, owner: str) -> dict:
     return {
+        "owner": owner,
         "query": request.query,
         "model_config": request.model_config_.model_dump(exclude_none=True),
     }
@@ -112,12 +114,13 @@ def _response_cache() -> ResponseCache | None:
 
 
 @router.post("/query", response_model=QueryResponse)
-async def run_query(request: QueryRequest) -> QueryResponse:
+async def run_query(request: QueryRequest, http_request: Request) -> QueryResponse:
     request_id = str(uuid.uuid4())
     total_start = time.monotonic()
+    owner = resolve_subject(http_request)
 
     cache = _response_cache()
-    cache_payload = _cache_payload(request)
+    cache_payload = _cache_payload(request, owner)
     if cache is not None:
         cached_body = await cache.get(cache_payload)
         if cached_body is not None:
@@ -162,7 +165,7 @@ async def run_query(request: QueryRequest) -> QueryResponse:
     role_assignments: dict[str, str] = {}
 
     session_id = request.session_id
-    history_text = await load_history_text(session_id)
+    history_text = await load_history_text(session_id, owner=owner)
 
     decompose_start = time.monotonic()
     short_circuited = _is_simple_query(request.query)
@@ -235,7 +238,9 @@ async def run_query(request: QueryRequest) -> QueryResponse:
             session_id=session_id,
         )
         if direct_response.status == ConnectorStatus.SUCCESS:
-            await session_store.append(session_id or "", request.query, response.result)
+            await session_store.append(
+                session_id or "", request.query, response.result, owner=owner
+            )
         if cache is not None and direct_response.status == ConnectorStatus.SUCCESS:
             await cache.set(cache_payload, response.model_dump(mode="json"))
         return response
@@ -363,7 +368,7 @@ async def run_query(request: QueryRequest) -> QueryResponse:
         session_id=session_id,
     )
     if result:
-        await session_store.append(session_id or "", request.query, result)
+        await session_store.append(session_id or "", request.query, result, owner=owner)
     if cache is not None:
         await cache.set(cache_payload, response.model_dump(mode="json"))
     return response
