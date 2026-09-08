@@ -110,6 +110,7 @@ async def meta():
         "workspace": {
             "radar": settings.workspace_radar_enabled,
             "rag": settings.workspace_rag_enabled,
+            "web": settings.web_tools_enabled,
         },
     }
 

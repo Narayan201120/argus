@@ -16,9 +16,11 @@ venv/
 env/
 .env/
 
-# Environment variables (CRITICAL — never commit API keys)
+# Environment variables (CRITICAL - never commit API keys)
 .env
-.env.*
+
+# Local run artifacts (eval runs, ops routine output - never commit)
+runs/.env.*
 !.env.template
 .env.example
 

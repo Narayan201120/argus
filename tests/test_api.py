@@ -44,7 +44,7 @@ def test_meta_endpoint():
     response = client.get("/v1/meta")
     assert response.status_code == 200
     assert "ARGUS" in response.json()["name"]
-    assert set(response.json()["workspace"]) == {"radar", "rag"}
+    assert set(response.json()["workspace"]) == {"radar", "rag", "web"}
 
 
 def test_favicon_returns_no_content():
