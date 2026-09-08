@@ -80,3 +80,77 @@ def test_auth_disabled_by_default(monkeypatch):
     monkeypatch.delattr(settings, "jwt_secret", raising=False)
     with TestClient(app) as client:
         assert client.get("/v1/models").status_code == 200
+
+
+def test_meta_and_favicon_exempt_without_token(auth_client):
+    assert auth_client.get("/v1/meta").status_code == 200
+    assert auth_client.get("/favicon.ico").status_code == 204
+
+
+def test_middleware_order_locked():
+    # user_middleware lists outermost first, which is also execution order.
+    names = [m.cls.__name__ for m in app.user_middleware]
+    assert names == [
+        "PrometheusMiddleware",
+        "JWTAuthMiddleware",
+        "RateLimitMiddleware",
+    ]
+
+
+def test_subject_visible_to_ratelimit():
+    from starlette.requests import Request
+
+    from app.ratelimit import identity_for
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/v1/models",
+        "headers": [],
+        "client": ("9.9.9.9", 1234),
+    }
+    request = Request(scope)
+    request.state.subject = "alice"
+    assert identity_for(request) == "sub:alice"
+
+
+def test_auth_me_reports_subject(auth_client):
+    me = auth_client.get("/v1/auth/me")
+    assert me.status_code == 401
+    issued = _issue(auth_client)
+    token = issued.json()["access_token"]
+    me = auth_client.get(
+        "/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert me.status_code == 200
+    assert me.json()["sub"] == "dev-client"
+
+
+def test_auth_me_single_user_fallback_without_auth(monkeypatch):
+    monkeypatch.setattr(settings, "auth_enabled", False)
+    monkeypatch.setattr(settings, "auth_single_user_mode", True)
+    with TestClient(app) as client:
+        response = client.get("/v1/auth/me")
+        assert response.status_code == 200
+        assert response.json()["sub"] == "local"
+
+
+def test_issuer_roundtrip_when_configured(auth_client, monkeypatch):
+    import jwt as pyjwt
+
+    monkeypatch.setattr(settings, "jwt_issuer", "argus-dev")
+    issued = _issue(auth_client)
+    token = issued.json()["access_token"]
+    payload = pyjwt.decode(
+        token,
+        settings.jwt_secret or "",
+        algorithms=[settings.jwt_algorithm],
+        issuer="argus-dev",
+    )
+    assert payload["iss"] == "argus-dev"
+    assert (
+        auth_client.get(
+            "/v1/models", headers={"Authorization": f"Bearer {token}"}
+        ).status_code
+        == 200
+    )

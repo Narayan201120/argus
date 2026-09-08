@@ -1,3 +1,4 @@
+import { authFetch } from './auth'
 import type {
   InvestigationListResponse,
   RadarPage,
@@ -57,19 +58,19 @@ function toQuery(params: RadarSearchParams): string {  const qs = new URLSearchP
 
 export async function searchPapers(params: RadarSearchParams = {}): Promise<RadarPage> {
   await ensureRadar()
-  return jsonOrThrow(await fetch(`/v1/radar/papers${toQuery(params)}`))
+  return jsonOrThrow(await authFetch(`/v1/radar/papers${toQuery(params)}`))
 }
 
 export async function fetchPaper(id: string): Promise<RadarPaperDetail> {
   await ensureRadar()
-  return jsonOrThrow(await fetch(`/v1/radar/papers/${encodeURIComponent(id)}`))
+  return jsonOrThrow(await authFetch(`/v1/radar/papers/${encodeURIComponent(id)}`))
 }
 
 export async function fetchSimilar(id: string): Promise<RadarSimilarPaper[]> {
   await ensureRadar()
-  return jsonOrThrow(await fetch(`/v1/radar/papers/${encodeURIComponent(id)}/similar`))
+  return jsonOrThrow(await authFetch(`/v1/radar/papers/${encodeURIComponent(id)}/similar`))
 }
 
 export async function listInvestigations(limit = 20): Promise<InvestigationListResponse> {
-  return jsonOrThrow(await fetch(`/v1/investigations?limit=${limit}`))
+  return jsonOrThrow(await authFetch(`/v1/investigations?limit=${limit}`))
 }

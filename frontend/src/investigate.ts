@@ -1,3 +1,4 @@
+import { authFetch } from './auth'
 import type {
   InvestigationBoard,
   InvestigationCancelResult,
@@ -23,7 +24,7 @@ async function jsonOrThrow<T>(response: Response): Promise<T> {
 
 export async function startInvestigation(query: string): Promise<InvestigationCreated> {
   return jsonOrThrow(
-    await fetch('/v1/investigate', {
+    await authFetch('/v1/investigate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query }),
@@ -32,12 +33,12 @@ export async function startInvestigation(query: string): Promise<InvestigationCr
 }
 
 export async function fetchBoard(investigationId: string, signal?: AbortSignal): Promise<InvestigationBoard> {
-  return jsonOrThrow(await fetch(`/v1/investigate/${investigationId}`, { signal }))
+  return jsonOrThrow(await authFetch(`/v1/investigate/${investigationId}`, { signal }))
 }
 
 export async function cancelInvestigation(investigationId: string): Promise<InvestigationCancelResult> {
   return jsonOrThrow(
-    await fetch(`/v1/investigate/${investigationId}/cancel`, { method: 'POST' }),
+    await authFetch(`/v1/investigate/${investigationId}/cancel`, { method: 'POST' }),
   )
 }
 
@@ -51,7 +52,7 @@ export async function streamInvestigation(
   handlers: InvestigationStreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch(`/v1/investigate/${investigationId}/stream`, {
+  const response = await authFetch(`/v1/investigate/${investigationId}/stream`, {
     headers: { Accept: 'text/event-stream' },
     signal,
   })

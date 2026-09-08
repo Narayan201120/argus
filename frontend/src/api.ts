@@ -1,3 +1,4 @@
+import { authFetch } from './auth'
 import type { ModelsResponse, QueryEnvelope, QueryOptions, RoutingInfo } from './types'
 
 async function jsonOrThrow<T>(response: Response): Promise<T> {
@@ -15,24 +16,24 @@ async function jsonOrThrow<T>(response: Response): Promise<T> {
 }
 
 export async function getModels(): Promise<ModelsResponse> {
-  return jsonOrThrow(await fetch('/v1/models'))
+  return jsonOrThrow(await authFetch('/v1/models'))
 }
 
 export async function getRouting(): Promise<RoutingInfo> {
-  return jsonOrThrow(await fetch('/v1/routing'))
+  return jsonOrThrow(await authFetch('/v1/routing'))
 }
 
 export async function transcribeAudio(file: File): Promise<string> {
   const form = new FormData()
   form.append('file', file)
   const body = await jsonOrThrow<{ text: string }>(
-    await fetch('/v1/transcribe', { method: 'POST', body: form }),
+    await authFetch('/v1/transcribe', { method: 'POST', body: form }),
   )
   return body.text
 }
 
 export async function speakText(text: string): Promise<string> {
-  const response = await fetch('/v1/speak', {
+  const response = await authFetch('/v1/speak', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
@@ -51,7 +52,7 @@ export async function speakText(text: string): Promise<string> {
 }
 
 export async function postFeedback(requestId: string, rating: number): Promise<void> {
-  const response = await fetch('/v1/feedback', {
+  const response = await authFetch('/v1/feedback', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ request_id: requestId, rating }),
@@ -76,7 +77,7 @@ export async function streamQuery(
   },
   signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch('/v1/query/stream', {
+  const response = await authFetch('/v1/query/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

@@ -119,6 +119,11 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     auth_client_id: str | None = None
     auth_client_secret: str | None = None
+    # P7 identity (DEC-056): single-user default ON, enforcement flagged off.
+    # Rollback is AUTH_ENABLED=false; no board migration by construction.
+    auth_single_user_mode: bool = True
+    auth_require_auth: bool = False
+    jwt_issuer: str | None = None
 
     # Connector defaults
     connector_timeout_s: int = 45

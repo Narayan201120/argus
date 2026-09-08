@@ -1,7 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from app.auth import create_access_token
+from app.auth import create_access_token, resolve_subject
 from app.config import settings
 
 router = APIRouter()
@@ -32,3 +32,12 @@ async def issue_token(request: TokenRequest) -> TokenResponse:
 
     token, expires_in = create_access_token(subject=request.client_id)
     return TokenResponse(access_token=token, expires_in=expires_in)
+
+
+class MeResponse(BaseModel):
+    sub: str | None
+
+
+@router.get("/auth/me", response_model=MeResponse)
+async def read_me(request: Request) -> MeResponse:
+    return MeResponse(sub=resolve_subject(request) or None)

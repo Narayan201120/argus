@@ -1,3 +1,4 @@
+import { authFetch } from './auth'
 import type {
   LibraryCollectionDetail,
   LibraryCollectionListResponse,
@@ -44,20 +45,20 @@ async function ensureLibrary(): Promise<void> {
 
 export async function listDocuments(): Promise<LibraryDocumentListResponse> {
   await ensureLibrary()
-  return jsonOrThrow(await fetch('/v1/library/documents'))
+  return jsonOrThrow(await authFetch('/v1/library/documents'))
 }
 
 export async function fetchDocumentPreview(filename: string): Promise<LibraryDocumentPreview> {
   await ensureLibrary()
-  return jsonOrThrow(await fetch(`/v1/library/documents/${encodeURIComponent(filename)}`))
+  return jsonOrThrow(await authFetch(`/v1/library/documents/${encodeURIComponent(filename)}`))
 }
 
 export async function listCollections(): Promise<LibraryCollectionListResponse> {
   await ensureLibrary()
-  return jsonOrThrow(await fetch('/v1/library/collections'))
+  return jsonOrThrow(await authFetch('/v1/library/collections'))
 }
 
 export async function fetchCollection(id: string): Promise<LibraryCollectionDetail> {
   await ensureLibrary()
-  return jsonOrThrow(await fetch(`/v1/library/collections/${encodeURIComponent(id)}`))
+  return jsonOrThrow(await authFetch(`/v1/library/collections/${encodeURIComponent(id)}`))
 }

@@ -83,6 +83,10 @@ app = FastAPI(
 app.add_middleware(RateLimitMiddleware, holder=holder)
 app.add_middleware(JWTAuthMiddleware)
 app.add_middleware(PrometheusMiddleware)
+# Middleware order is locked: Prometheus runs first, then JWT, then RateLimit.
+# Starlette runs the last-added middleware outermost, so this add order gives
+# Prometheus -> JWT -> RateLimit execution. RateLimit reads request.state.subject
+# set by JWT, so swapping JWT and RateLimit would lump authenticated users by IP.
 
 app.include_router(auth_router.router, prefix="/v1", tags=["Auth"])
 app.include_router(feedback_router.router, prefix="/v1", tags=["Feedback"])

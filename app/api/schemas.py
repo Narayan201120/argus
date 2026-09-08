@@ -195,8 +195,14 @@ from app.evidence.models import (  # noqa: E402
 
 class InvestigateRequest(BaseModel):
     # "local" is an identity placeholder and MUST NOT be treated as proof of authorization.
+    # Deprecated: P7-1 routes take the server subject and ignore this field.
     query: str = Field(..., min_length=1, max_length=4000)
-    user_id: str = Field(default="local", min_length=1, max_length=128)
+    user_id: str = Field(
+        default="local",
+        min_length=1,
+        max_length=128,
+        deprecated="Server subject wins; this field is ignored from P7-1.",
+    )
 
 
 class InvestigateCreated(BaseModel):
