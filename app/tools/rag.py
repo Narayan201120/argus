@@ -6,6 +6,7 @@ memory, and refreshes it on expiry or on a single 401 retry. Backend only.
 Real HTTP via httpx; no other network libraries.
 """
 
+import asyncio
 import time
 from typing import Any
 
@@ -53,6 +54,9 @@ class RagRetrieveTool(BaseTool):
     def __init__(self) -> None:
         self._access_token: str | None = None
         self._token_expires_at: float = 0.0
+        # Serializes sign-in refreshes so a herd of concurrent callers
+        # (retrieval + library proxy share this singleton) fires one POST.
+        self._token_lock = asyncio.Lock()
 
     @property
     def enabled(self) -> bool:
@@ -67,40 +71,43 @@ class RagRetrieveTool(BaseTool):
         """Return a cached bearer token or sign in for a fresh one."""
         if self._access_token and time.time() < self._token_expires_at - _TOKEN_SKEW_S:
             return self._access_token
-        base_url = settings.rag_base_url or ""
-        try:
-            async with httpx.AsyncClient(timeout=settings.tool_timeout_s) as client:
-                response = await client.post(
-                    f"{base_url}/api/sign-in/",
-                    json={"username": settings.rag_service_user, "password": settings.rag_service_pass},
-                )
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"rag sign-in failed: {exc}") from exc
-        if response.status_code != 200:
-            raise RuntimeError(f"rag sign-in HTTP {response.status_code}: {response.text[:200]}")
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise RuntimeError(f"rag sign-in returned invalid JSON: {exc}") from exc
-        if not isinstance(payload, dict):
-            raise RuntimeError("rag sign-in returned an unexpected body")
-        tokens = payload.get("tokens")
-        if isinstance(tokens, dict):
-            token = tokens.get("access")
-        else:
-            token = payload.get("access") or payload.get("access_token") or payload.get("token")
-        if not token:
-            raise RuntimeError("rag sign-in returned no access token")
-        ttl: Any = payload.get("expires_in", _DEFAULT_TOKEN_TTL_S)
-        try:
-            ttl_seconds = float(ttl)
-        except (TypeError, ValueError):
-            ttl_seconds = _DEFAULT_TOKEN_TTL_S
-        if ttl_seconds <= 0:
-            ttl_seconds = _DEFAULT_TOKEN_TTL_S
-        self._access_token = str(token)
-        self._token_expires_at = time.time() + ttl_seconds
-        return self._access_token
+        async with self._token_lock:
+            if self._access_token and time.time() < self._token_expires_at - _TOKEN_SKEW_S:
+                return self._access_token
+            base_url = settings.rag_base_url or ""
+            try:
+                async with httpx.AsyncClient(timeout=settings.tool_timeout_s) as client:
+                    response = await client.post(
+                        f"{base_url}/api/sign-in/",
+                        json={"username": settings.rag_service_user, "password": settings.rag_service_pass},
+                    )
+            except httpx.HTTPError as exc:
+                raise RuntimeError(f"rag sign-in failed: {exc}") from exc
+            if response.status_code != 200:
+                raise RuntimeError(f"rag sign-in HTTP {response.status_code}: {response.text[:200]}")
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise RuntimeError(f"rag sign-in returned invalid JSON: {exc}") from exc
+            if not isinstance(payload, dict):
+                raise RuntimeError("rag sign-in returned an unexpected body")
+            tokens = payload.get("tokens")
+            if isinstance(tokens, dict):
+                token = tokens.get("access")
+            else:
+                token = payload.get("access") or payload.get("access_token") or payload.get("token")
+            if not token:
+                raise RuntimeError("rag sign-in returned no access token")
+            ttl: Any = payload.get("expires_in", _DEFAULT_TOKEN_TTL_S)
+            try:
+                ttl_seconds = float(ttl)
+            except (TypeError, ValueError):
+                ttl_seconds = _DEFAULT_TOKEN_TTL_S
+            if ttl_seconds <= 0:
+                ttl_seconds = _DEFAULT_TOKEN_TTL_S
+            self._access_token = str(token)
+            self._token_expires_at = time.time() + ttl_seconds
+            return self._access_token
 
     def _map_hit(self, hit: Any, index: int, latency_ms: int) -> EvidencePayload | None:
         if not isinstance(hit, dict):

@@ -53,12 +53,16 @@ class EvidenceBoardStore:
             meta_json: str = json.dumps(meta)
             evidence_json: str = _evidence_list_adapter.dump_json(inv.board.evidence).decode("utf-8")
             claims_json: str = _claims_list_adapter.dump_json(inv.board.claims).decode("utf-8")
-            await client.set(_meta_key(inv.id), meta_json)
-            await client.set(_evidence_key(inv.id), evidence_json)
-            await client.set(_claims_key(inv.id), claims_json)
-            await client.expire(_meta_key(inv.id), ttl_s)
-            await client.expire(_evidence_key(inv.id), ttl_s)
-            await client.expire(_claims_key(inv.id), ttl_s)
+            # Atomically land meta+evidence+claims+TTLs: one MULTI/EXEC round
+            # trip so a crash can never leave a torn snapshot behind.
+            pipe = client.pipeline(transaction=True)
+            await pipe.set(_meta_key(inv.id), meta_json)
+            await pipe.set(_evidence_key(inv.id), evidence_json)
+            await pipe.set(_claims_key(inv.id), claims_json)
+            await pipe.expire(_meta_key(inv.id), ttl_s)
+            await pipe.expire(_evidence_key(inv.id), ttl_s)
+            await pipe.expire(_claims_key(inv.id), ttl_s)
+            await pipe.execute()
         except Exception as exc:  # noqa: BLE001 - fail open, always
             logger.warning({"message": "EvidenceBoard save failed (ignored)", "error": str(exc)})
 

@@ -113,6 +113,24 @@ async def test_append_keeps_short_answers_intact(fake_redis):
     assert raw[0]["a"] == "exact answer"
 
 
+@pytest.mark.asyncio
+async def test_concurrent_appends_lose_no_turns(fake_redis):
+    """P6-1: 10 concurrent appends on one session must all land.
+
+    append is WATCH/MULTI-guarded, so overlapping writers retry on
+    WatchError instead of last-writer-wins clobbering each other.
+    (fakeredis ops complete without yielding, so plain gather interleaves
+    less than real network round trips; this pins the contract.)
+    """
+    import asyncio
+
+    await asyncio.gather(*[session_store.append("race", f"q{i}", f"a{i}") for i in range(10)])
+    raw = json.loads(await fake_redis.get(_key("race")))
+    assert len(raw) == 10  # zero lost turns, window (12) not exceeded
+    assert sorted(t["q"] for t in raw) == [f"q{i}" for i in range(10)]
+    assert len(raw) <= max(settings.memory_max_turns, 1)
+
+
 # ── API integration ─────────────────────────────────────────────────────────
 
 

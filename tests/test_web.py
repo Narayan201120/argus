@@ -37,6 +37,21 @@ from app.tools.web import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _public_dns_by_default(monkeypatch):
+    """Mock-only discipline: real DNS never leaves the test process.
+
+    Pre-SSRF tests fetch example.com with mocked HTTP; without this they
+    would resolve for real (and fail closed offline). SSRF tests override
+    with their own scripted/raising fakes, which win (applied later).
+    """
+    monkeypatch.setattr(
+        web_module.socket,
+        "getaddrinfo",
+        lambda host, port, *args, **kwargs: [(2, 1, 6, "", ("93.184.216.34", 0))],
+    )
+
+
 @pytest.fixture
 async def fake_redis() -> AsyncIterator[Any]:
     fr = fakeredis_aioredis.FakeRedis(decode_responses=True)
@@ -468,7 +483,7 @@ async def test_followups_only_web_runs_after_round_zero(
 
     async def _spy(
         investigation_id: str, planned: list[tuple[str, str]]
-    ) -> tuple[int, bool, bool]:
+    ) -> tuple[int, bool, bool, bool]:
         plans.append(list(planned))
         outcome = await original(investigation_id, planned)
         if len(plans) == 1:
@@ -593,3 +608,174 @@ async def test_record_web_call_increments_both_counters(
         assert row.usage.web_calls_used == 2
     finally:
         await mgr.cancel(inv.id)
+
+
+# ── P6-1 SSRF hardening: DNS resolution + final-URL re-check (mock-only) ─────
+# Appends only; earlier tests above are untouched. All DNS is scripted via
+# web_module.socket.getaddrinfo; all HTTP via the _FetchStream/_FetchClient
+# fakes. No live network.
+
+
+def _p61_public_infos() -> list[Any]:
+    return [(2, 1, 6, "", ("93.184.216.34", 0))]
+
+
+def _p61_private_infos() -> list[Any]:
+    return [(2, 1, 6, "", ("10.0.0.5", 0))]
+
+
+def _p61_script_dns(monkeypatch: pytest.MonkeyPatch, fake: Any) -> list[str]:
+    seen: list[str] = []
+
+    def _wrapped(host: str, port: Any, *args: Any, **kwargs: Any) -> Any:
+        seen.append(host)
+        return fake(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(web_module.socket, "getaddrinfo", _wrapped)
+    return seen
+
+
+def _p61_refusing_client(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    created: list[bool] = []
+
+    def _create(*args: Any, **kwargs: Any) -> Any:
+        created.append(True)
+        raise AssertionError("refused url must not touch HTTP")
+
+    monkeypatch.setattr(web_module.httpx, "AsyncClient", _create)
+    return created
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "http://localhost/page",
+        "http://localhost:8000/page",
+        "http://127.0.0.1:9/",
+        "http://10.1.2.3/internal",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://0.0.0.0/",
+    ],
+)
+async def test_p61_fetch_ssrf_literal_refused_without_http_or_dns(
+    bad_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created = _p61_refusing_client(monkeypatch)
+
+    def _no_dns(host: str, port: Any, *args: Any, **kwargs: Any) -> Any:
+        raise AssertionError(f"fast path must block {bad_url} without DNS (host={host})")
+
+    monkeypatch.setattr(web_module.socket, "getaddrinfo", _no_dns)
+    result = await WebFetchTool().run("need page", params={"url": bad_url})
+    assert result.ok is False
+    assert result.error
+    assert created == []
+
+
+async def test_p61_fetch_ssrf_hostname_resolving_private_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = _p61_refusing_client(monkeypatch)
+
+    def _fake(host: str, port: Any, *args: Any, **kwargs: Any) -> Any:
+        assert host == "evil.example"
+        return _p61_private_infos()
+
+    _p61_script_dns(monkeypatch, _fake)
+    result = await WebFetchTool().run("need page", params={"url": "https://evil.example/page"})
+    assert result.ok is False
+    assert "refused" in (result.error or "").lower()
+    assert created == []
+
+
+async def test_p61_fetch_ssrf_mixed_answers_refused_when_any_private(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = _p61_refusing_client(monkeypatch)
+
+    def _fake(host: str, port: Any, *args: Any, **kwargs: Any) -> Any:
+        return _p61_public_infos() + _p61_private_infos()
+
+    _p61_script_dns(monkeypatch, _fake)
+    result = await WebFetchTool().run("need page", params={"url": "https://mixed.example/page"})
+    assert result.ok is False
+    assert "refused" in (result.error or "").lower()
+    assert created == []
+
+
+async def test_p61_fetch_ssrf_dns_failure_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = _p61_refusing_client(monkeypatch)
+
+    def _fake(host: str, port: Any, *args: Any, **kwargs: Any) -> Any:
+        raise web_module.socket.gaierror("mocked dns outage")
+
+    _p61_script_dns(monkeypatch, _fake)
+    result = await WebFetchTool().run(
+        "need page", params={"url": "https://unverifiable.example/page"}
+    )
+    assert result.ok is False
+    assert "refused" in (result.error or "").lower()
+    assert created == []
+
+
+async def test_p61_fetch_ssrf_redirect_final_literal_private_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake(host: str, port: Any, *args: Any, **kwargs: Any) -> Any:
+        assert host == "example.com"
+        return _p61_public_infos()
+
+    _p61_script_dns(monkeypatch, _fake)
+    stream = _FetchStream(b"<html><body>should not be read</body></html>", status=200)
+    stream.url = "http://10.0.0.5/secret"  # type: ignore[attr-defined]
+    stream.history = ["https://example.com/start"]  # type: ignore[attr-defined]
+    _install_fetch(monkeypatch, stream)
+    extract_calls = _script_extract(monkeypatch, "never used")
+    result = await WebFetchTool().run("need page", params={"url": "https://example.com/start"})
+    assert result.ok is False
+    assert "refused" in (result.error or "").lower()
+    assert extract_calls == []
+
+
+async def test_p61_fetch_ssrf_redirect_final_hostname_private_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake(host: str, port: Any, *args: Any, **kwargs: Any) -> Any:
+        if host == "example.com":
+            return _p61_public_infos()
+        if host == "evil.example":
+            return _p61_private_infos()
+        raise AssertionError(f"unexpected dns host: {host}")
+
+    _p61_script_dns(monkeypatch, _fake)
+    stream = _FetchStream(b"<html><body>should not be read</body></html>", status=200)
+    stream.url = "https://evil.example/secret"  # type: ignore[attr-defined]
+    stream.history = ["https://example.com/start"]  # type: ignore[attr-defined]
+    _install_fetch(monkeypatch, stream)
+    extract_calls = _script_extract(monkeypatch, "never used")
+    result = await WebFetchTool().run("need page", params={"url": "https://example.com/start"})
+    assert result.ok is False
+    assert "refused" in (result.error or "").lower()
+    assert extract_calls == []
+
+
+async def test_p61_fetch_ssrf_public_hostname_passes_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen = _p61_script_dns(
+        monkeypatch,
+        lambda host, port, *args, **kwargs: _p61_public_infos(),
+    )
+    stream = _FetchStream(b"<html><body><p>Hello fetch world</p></body></html>", status=200)
+    stream.url = "https://example.com/article"  # type: ignore[attr-defined]
+    client = _install_fetch(monkeypatch, stream)
+    _script_extract(monkeypatch, "Readable page text")
+    result = await WebFetchTool().run(
+        "need page", params={"url": "https://example.com/article"}
+    )
+    assert result.ok is True
+    assert result.items[0].content == "Readable page text"
+    assert client.stream_calls == [("GET", "https://example.com/article")]
+    assert seen != []

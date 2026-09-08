@@ -8,6 +8,7 @@ no live calls.
 
 import asyncio
 import ipaddress
+import socket
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -88,10 +89,10 @@ def _map_search_result(
 def _ssrf_block_reason(url: str) -> str | None:
     """Return why a fetch URL is refused, or None when it looks fetchable.
 
-    Refuses non-http(s) schemes and localhost/loopback/private hosts. Only
-    literal IPs are inspected with ipaddress; hostnames are NOT resolved, so
-    names resolving to private IPs are NOT covered, and redirect targets are
-    NOT re-checked.
+    Fast path only: refuses non-http(s) schemes and localhost/loopback/private
+    literal IPs (via ipaddress). Hostnames are NOT resolved here; use
+    _dns_block_reason for that. Redirect targets are NOT checked here; the
+    fetch path re-checks the final response URL separately.
     """
     try:
         parsed = urlparse(url)
@@ -109,15 +110,73 @@ def _ssrf_block_reason(url: str) -> str | None:
         ip = ipaddress.ip_address(lowered)
     except ValueError:
         return None
-    if (
+    if _ip_is_blocked(ip):
+        return f"refused loopback/private host: {host}"
+    return None
+
+
+def _ip_is_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """True when a resolved/literal IP must never be fetched."""
+    return (
         ip.is_loopback
         or ip.is_private
         or ip.is_link_local
         or ip.is_multicast
         or ip.is_unspecified
         or ip.is_reserved
-    ):
-        return f"refused loopback/private host: {host}"
+    )
+
+
+def _hostname_of(url: str) -> str | None:
+    """Extract the hostname from a URL string, or None when absent/invalid."""
+    try:
+        return urlparse(str(url)).hostname
+    except ValueError:
+        return None
+
+
+async def _dns_block_reason(host: str) -> str | None:
+    """Resolve a hostname and refuse it if ANY answer is non-public.
+
+    Literal IPs need no DNS (the _ssrf_block_reason fast path already vetted
+    them) and return None here. DNS failures, empty answers, or unparseable
+    answers refuse fail-closed since safety cannot be verified.
+
+    Limits (honest, not fixed here): TOCTOU remains — DNS may change between
+    this check and the httpx connect, and per-hop redirect targets are not
+    pinned; only the initial URL (before connect) and the final response URL
+    (after redirects) are checked. A malicious DNS/redirect can still race
+    the check. Mitigating that needs connect-level IP pinning, which httpx
+    does not offer here.
+    """
+    if not host:
+        return "url has no host"
+    normalized = host.lower().rstrip(".")
+    if normalized == "localhost" or normalized.endswith(".localhost"):
+        return "refused localhost host"
+    try:
+        ipaddress.ip_address(normalized)
+        return None
+    except ValueError:
+        pass
+    try:
+        infos = await asyncio.to_thread(socket.getaddrinfo, normalized, None)
+    except Exception as exc:
+        return f"refused unverifiable host (dns failed): {host}: {exc}"
+    if not infos:
+        return f"refused unverifiable host (no dns results): {host}"
+    for info in infos:
+        try:
+            sockaddr = info[4]
+            if isinstance(sockaddr, (tuple, list)):
+                ip_raw = sockaddr[0]
+            else:
+                ip_raw = sockaddr
+            ip = ipaddress.ip_address(str(ip_raw))
+        except ValueError:
+            return f"refused unverifiable host resolution: {host}"
+        if _ip_is_blocked(ip):
+            return f"refused loopback/private host: {host}"
     return None
 
 
@@ -211,6 +270,12 @@ class WebFetchTool(BaseTool):
     The URL comes from params["url"]; a query starting with http(s):// is
     also accepted. Gap queries are usually topics, so callers pass the URL
     via params.
+
+    SSRF guard: literal-IP/scheme fast path (_ssrf_block_reason) plus DNS
+    resolution (_dns_block_reason, fail-closed) before connect, then the
+    final response URL is re-checked the same way after redirects. TOCTOU
+    remains: DNS may change between check and connect and intermediate
+    redirect hops are not individually pinned (only the final URL).
     """
 
     name: str = "web_fetch"
@@ -238,11 +303,55 @@ class WebFetchTool(BaseTool):
                 error=blocked,
                 latency_ms=int((time.perf_counter() - start) * 1000),
             )
+        initial_host = _hostname_of(url)
+        if initial_host is None:
+            return ToolResult(
+                tool_name=self.name,
+                ok=False,
+                error="url has no host",
+                latency_ms=int((time.perf_counter() - start) * 1000),
+            )
+        dns_blocked = await _dns_block_reason(initial_host)
+        if dns_blocked is not None:
+            return ToolResult(
+                tool_name=self.name,
+                ok=False,
+                error=dns_blocked,
+                latency_ms=int((time.perf_counter() - start) * 1000),
+            )
         try:
             async with httpx.AsyncClient(
                 timeout=settings.tool_timeout_s, follow_redirects=True
             ) as client:
                 async with client.stream("GET", url) as response:
+                    final_raw = getattr(response, "url", "")
+                    final_url = str(final_raw or "")
+                    if final_url:
+                        final_blocked = _ssrf_block_reason(final_url)
+                        if final_blocked is not None:
+                            return ToolResult(
+                                tool_name=self.name,
+                                ok=False,
+                                error=final_blocked,
+                                latency_ms=int((time.perf_counter() - start) * 1000),
+                            )
+                        final_host = _hostname_of(final_url)
+                        if final_host is None:
+                            return ToolResult(
+                                tool_name=self.name,
+                                ok=False,
+                                error="url has no host",
+                                latency_ms=int((time.perf_counter() - start) * 1000),
+                            )
+                        if final_host.lower().rstrip(".") != initial_host.lower().rstrip("."):
+                            final_dns_blocked = await _dns_block_reason(final_host)
+                            if final_dns_blocked is not None:
+                                return ToolResult(
+                                    tool_name=self.name,
+                                    ok=False,
+                                    error=final_dns_blocked,
+                                    latency_ms=int((time.perf_counter() - start) * 1000),
+                                )
                     length = response.headers.get("content-length")
                     if length is not None:
                         try:

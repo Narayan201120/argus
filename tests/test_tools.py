@@ -495,3 +495,164 @@ async def test_all_error_round_reports_not_succeeded(monkeypatch: pytest.MonkeyP
         assert result == (0, True, False, False)
     finally:
         await mgr.cancel(inv.id)
+
+
+# ── P6-1 snapshot atomicity (save pipelines meta+evidence+claims+TTLs) ───────
+
+
+@pytest.mark.asyncio
+async def test_evidence_save_snapshot_pipelined_round_trip(
+    fake_redis: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time as _time
+
+    from app.evidence.models import Board, Claim, Evidence
+    from app.evidence.store import EvidenceBoardStore
+    from app.investigations import new_claim_id, new_evidence_id
+    from app.rediskit import holder
+
+    store = EvidenceBoardStore()
+    inv_id = "inv_p61_snapshot_probe"
+    now = _time.time()
+    inv = __import__("app.evidence.models", fromlist=["Investigation"]).Investigation(
+        id=inv_id,
+        user_id="local",
+        query="snapshot probe query",
+        status="planned",
+        created_at=now,
+        updated_at=now,
+        deadline_at=now + 300,
+        budgets={"max_iterations": 3, "max_tool_calls": 5, "max_wall_time_s": 60},
+        board=Board(
+            evidence=[
+                Evidence(
+                    id=new_evidence_id(),
+                    investigation_id=inv_id,
+                    source_ref="snap-ref-1",
+                    content="snapshot finding one",
+                    type="text",
+                    confidence=0.8,
+                    created_at=now,
+                )
+            ],
+            claims=[
+                Claim(
+                    id=new_claim_id(),
+                    investigation_id=inv_id,
+                    statement="snapshot claim one",
+                    confidence=0.7,
+                )
+            ],
+        ),
+    )
+    ttl_s = 120
+
+    # Record the call shape: direct SET/EXPIRE outside a pipeline is a torn
+    # snapshot risk; the fix must batch all six commands into one EXEC.
+    calls: dict[str, Any] = {"direct_set": 0, "direct_expire": 0, "pipeline": 0, "execute": 0}
+    transactions: list[Any] = []
+    inner = fake_redis
+    orig_pipeline = inner.pipeline
+
+    def counting_pipeline(*args: Any, **kwargs: Any) -> Any:
+        calls["pipeline"] += 1
+        transactions.append(kwargs.get("transaction"))
+        pipe = orig_pipeline(*args, **kwargs)
+        orig_execute = pipe.execute
+
+        async def counted_execute(*a: Any, **k: Any) -> Any:
+            calls["execute"] += 1
+            return await orig_execute(*a, **k)
+
+        pipe.execute = counted_execute  # type: ignore[method-assign]
+        return pipe
+
+    class _Recorder:
+        def __init__(self, wrapped: Any) -> None:
+            self.__dict__["_wrapped"] = wrapped
+
+        def pipeline(self, *args: Any, **kwargs: Any) -> Any:
+            return counting_pipeline(*args, **kwargs)
+
+        def __getattr__(self, name: str) -> Any:
+            attr = getattr(self.__dict__["_wrapped"], name)
+            if name in ("set", "expire") and callable(attr):
+
+                async def counted(*a: Any, _attr: Any = attr, _name: str = name, **k: Any) -> Any:
+                    calls["direct_" + _name] += 1
+                    return await _attr(*a, **k)
+
+                return counted
+            return attr
+
+    monkeypatch.setattr(holder, "client", _Recorder(inner))
+    await store.save(inv, ttl_s)
+
+    assert calls["direct_set"] == 0
+    assert calls["direct_expire"] == 0
+    assert calls["pipeline"] == 1
+    assert calls["execute"] == 1
+    assert transactions == [True]
+
+    # Key layout unchanged and TTLs preserved on all three snapshot keys.
+    for suffix in ("meta", "evidence", "claims"):
+        assert await inner.exists(f"argus:inv:{inv_id}:{suffix}") == 1
+        ttl = await inner.ttl(f"argus:inv:{inv_id}:{suffix}")
+        assert 0 < ttl <= ttl_s
+
+    # Round-trip exact through a blank store (bypasses the in-memory mirror).
+    loaded = await EvidenceBoardStore().load(inv_id)
+    assert loaded is not None
+    assert loaded.model_dump(mode="json") == inv.model_dump(mode="json")
+
+
+# ── P6-1 token herd (one sign-in for ten simultaneous refreshes) ─────────────
+
+
+@pytest.mark.asyncio
+async def test_rag_token_refresh_herd_single_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    from app.tools.rag import RagRetrieveTool, rag_retrieve_tool
+
+    # The library proxy shares the singleton's _ensure_token (see
+    # app/api/routes/library.py), so the lock must live on the tool: all
+    # callers benefit without touching library.py.
+    assert hasattr(rag_retrieve_tool, "_token_lock")
+
+    tool = RagRetrieveTool()
+    tool._access_token = None
+    tool._token_expires_at = 0.0
+    calls = {"sign_in": 0}
+
+    class _Resp:
+        status_code = 200
+        text = "ok"
+
+        def json(self) -> dict[str, Any]:
+            return {"tokens": {"access": "herd-token"}, "expires_in": 1500}
+
+    class _FakeClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            del args, kwargs
+
+        async def __aenter__(self) -> "_FakeClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool:
+            return False
+
+        async def post(self, url: str, **kwargs: Any) -> _Resp:
+            del kwargs
+            assert url.endswith("/api/sign-in/")
+            calls["sign_in"] += 1
+            await asyncio.sleep(0.05)  # widen the race window
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+    monkeypatch.setattr(settings, "rag_base_url", "http://rag.test")
+    monkeypatch.setattr(settings, "tool_timeout_s", 5)
+
+    results = await asyncio.gather(*[tool._ensure_token() for _ in range(10)])
+    assert results == ["herd-token"] * 10
+    assert calls["sign_in"] == 1

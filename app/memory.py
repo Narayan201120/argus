@@ -9,9 +9,13 @@ Every operation silently no-ops when Redis is unavailable or memory is
 disabled - a memory outage can never fail a request.
 """
 
+import asyncio
 import json
+import random
 import time
 from typing import Any
+
+from redis.exceptions import WatchError
 
 from app.config import settings
 from app.metrics import MEMORY_TRUNCATED_ANSWERS
@@ -19,6 +23,16 @@ from app.rediskit import holder
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Bounded optimistic-locking retries for SessionStore.append (P6-1).
+# fakeredis 2.x has no EVAL support (verified: "unknown command 'eval'"),
+# so the atomic append uses WATCH/MULTI instead of a Lua script. This is
+# the same code path in prod and in mock-only tests: EXEC fails when
+# another writer touched the key between our WATCH and EXEC, and we
+# re-read + retry instead of silently losing turns. The backoff is jittered
+# so lockstep writers desynchronize instead of colliding every round.
+_APPEND_WATCH_RETRIES = 10
+_APPEND_RETRY_BACKOFF_S = 0.005
 
 
 def _key(session_id: str) -> str:
@@ -43,19 +57,36 @@ class SessionStore:
         client = holder.client
         if client is None:
             return
-        try:
-            raw = await client.get(_key(session_id))
-            turns: list[dict[str, Any]] = json.loads(raw) if raw else []
-            stored_answer = answer
-            if len(stored_answer) > settings.memory_max_answer_chars:
-                stored_answer = stored_answer[: settings.memory_max_answer_chars]
-                MEMORY_TRUNCATED_ANSWERS.inc()
-            turns.append({"q": question, "a": stored_answer, "ts": time.time()})
-            turns = turns[-max(settings.memory_max_turns, 1):]
-            await client.set(_key(session_id), json.dumps(turns))
-            await client.expire(_key(session_id), max(settings.memory_ttl_s, 60))
-        except Exception as exc:  # noqa: BLE001 - fail open, always
-            logger.warning({"message": "Memory append failed (ignored)", "error": str(exc)})
+        stored_answer = answer
+        if len(stored_answer) > settings.memory_max_answer_chars:
+            stored_answer = stored_answer[: settings.memory_max_answer_chars]
+            MEMORY_TRUNCATED_ANSWERS.inc()
+        new_turn = {"q": question, "a": stored_answer, "ts": time.time()}
+        key = _key(session_id)
+        max_turns = max(settings.memory_max_turns, 1)
+        ttl = max(settings.memory_ttl_s, 60)
+        for attempt in range(_APPEND_WATCH_RETRIES):
+            try:
+                async with client.pipeline(transaction=True) as pipe:
+                    await pipe.watch(key)
+                    raw = await pipe.get(key)
+                    turns: list[dict[str, Any]] = json.loads(raw) if raw else []
+                    turns.append(new_turn)
+                    turns = turns[-max_turns:]
+                    pipe.multi()
+                    pipe.set(key, json.dumps(turns))
+                    pipe.expire(key, ttl)
+                    await pipe.execute()
+                return
+            except WatchError:
+                # Lost the race: jitter so lockstep writers spread out,
+                # then re-read fresh state and retry.
+                await asyncio.sleep(random.uniform(0, _APPEND_RETRY_BACKOFF_S * (attempt + 1)))
+                continue
+            except Exception as exc:  # noqa: BLE001 - fail open, always
+                logger.warning({"message": "Memory append failed (ignored)", "error": str(exc)})
+                return
+        logger.warning({"message": "Memory append failed (ignored)", "error": "watch retries exhausted"})
 
     async def recent(self, session_id: str, limit: int | None = None) -> list[dict[str, Any]]:
         """Most recent turns, oldest first."""
